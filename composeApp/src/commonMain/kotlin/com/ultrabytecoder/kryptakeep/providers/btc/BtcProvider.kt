@@ -1,0 +1,593 @@
+package com.ultrabytecoder.kryptakeep.providers
+
+import com.ionspin.kotlin.bignum.decimal.BigDecimal
+import kotlinx.coroutines.delay
+import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.domain.model.UtxoInfo
+import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
+import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
+import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
+import fr.acinq.bitcoin.Bitcoin
+import fr.acinq.bitcoin.ByteVector
+import fr.acinq.bitcoin.DeterministicWallet
+import fr.acinq.bitcoin.OutPoint
+import fr.acinq.bitcoin.Script
+import fr.acinq.bitcoin.SigHash
+import fr.acinq.bitcoin.SigVersion
+import fr.acinq.bitcoin.TxId
+import fr.acinq.bitcoin.TxIn
+import fr.acinq.bitcoin.TxOut
+import fr.acinq.bitcoin.Transaction
+import fr.acinq.bitcoin.toSatoshi
+import kotlin.math.ceil
+import fr.acinq.bitcoin.utils.Either
+import fr.acinq.secp256k1.Hex
+import io.ktor.client.HttpClient
+import io.ktor.client.call.body
+import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
+import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
+import com.ultrabytecoder.kryptakeep.domain.model.TransactionStatus
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.longOrNull
+import kotlin.time.Clock
+
+class BtcProvider(
+    private val masterKey: DeterministicWallet.ExtendedPrivateKey,
+    private val utxoRepository: UtxoRepository,
+    private val accountRepository: AccountRepository,
+    val params: JsonObject,
+    private val networkConfig: NetworkConfig,
+    private val transactionRepository: TransactionRepository,
+    private val createClient: () -> HttpClient = { HttpClient() }
+) : Provider {
+
+    companion object {
+        private const val FALLBACK_FEE_RATE = 2L  // sat/vByte, used when API is unreachable
+        private const val GAP_LIMIT = 20
+        private const val RECEIVE_CHAIN = 0
+        private const val CHANGE_CHAIN = 1
+
+        // P2WPKH size constants (bytes)
+        private const val P2WPKH_INPUT_BASE_SIZE = 41L  // outpoint(36) + scriptSig varint(1) + sequence(4)
+        private const val P2WPKH_OUTPUT_SIZE = 31L      // 8(value) + 1(len) + 22(script)
+        private const val P2WPKH_WITNESS_SIZE = 108L    // 1(count) + (1+72 sig) + (1+33 pubkey)
+    }
+
+    private fun varIntSize(n: Int): Long = if (n < 253) 1L else 3L
+
+    private fun estimateVSize(numInputs: Int, numOutputs: Int): Long {
+        var nonWitness = 0L
+        nonWitness += 4 // version
+        nonWitness += varIntSize(numInputs)
+        nonWitness += numInputs * P2WPKH_INPUT_BASE_SIZE
+        nonWitness += varIntSize(numOutputs)
+        nonWitness += numOutputs * P2WPKH_OUTPUT_SIZE
+        nonWitness += 4 // locktime
+
+        var witness = 0L
+        if (numInputs > 0) {
+            witness += 2 // marker + flag
+        }
+        witness += numInputs * P2WPKH_WITNESS_SIZE
+
+        val weight = 4 * nonWitness + witness
+        return ceil(weight.toDouble() / 4.0).toLong()
+    }
+
+    private suspend fun fetchFeeRate(): Long {
+        return try {
+            val client = createClient()
+            try {
+                val response: HttpResponse = client.get("${networkConfig.btcMempoolApiBase}/v1/fees/recommended")
+                if (response.status != HttpStatusCode.OK) {
+                    return FALLBACK_FEE_RATE
+                }
+                val body = response.body<String>()
+                val json = Json.parseToJsonElement(body).jsonObject
+                val hourFee = json["hourFee"]?.jsonPrimitive?.longOrNull
+                if (hourFee != null && hourFee > 0) hourFee else FALLBACK_FEE_RATE
+            } finally {
+                client.close()
+            }
+        } catch (e: Exception) {
+            FALLBACK_FEE_RATE
+        }
+    }
+
+    private fun deriveReceiveKey(accountDerivationIndex: Long, addressIndex: Long): DeterministicWallet.ExtendedPrivateKey {
+        return masterKey.derivePrivateKey(
+            listOf(
+                DeterministicWallet.hardened(84),
+                DeterministicWallet.hardened(networkConfig.btcBip84CoinType),
+                DeterministicWallet.hardened(accountDerivationIndex),
+                0L,
+                addressIndex
+            )
+        )
+    }
+
+    private fun deriveChangeKey(accountDerivationIndex: Long, addressIndex: Long): DeterministicWallet.ExtendedPrivateKey {
+        return masterKey.derivePrivateKey(
+            listOf(
+                DeterministicWallet.hardened(84),
+                DeterministicWallet.hardened(networkConfig.btcBip84CoinType),
+                DeterministicWallet.hardened(accountDerivationIndex),
+                1L,
+                addressIndex
+            )
+        )
+    }
+
+    override suspend fun getAddress(accountId: String): String {
+        val account = accountRepository.getAccount(accountId)
+            ?: throw IllegalArgumentException("Account not found: $accountId")
+        return ourAddress(account.derivationIndex)
+    }
+
+    private fun ourAddress(index: Long): String {
+        val addressIndex = params["current_receive_key_id"]?.jsonPrimitive?.long ?: 0L
+        val derivedKey = deriveReceiveKey(index, addressIndex)
+        return Bitcoin.computeBIP84Address(derivedKey.publicKey, networkConfig.btcGenesisBlockHash)
+    }
+
+    override suspend fun sync(accountId: String, syncMode: SyncMode) {
+        println("BtcProvider.sync() started: accountId=$accountId, syncMode=$syncMode")
+        val account = accountRepository.getAccount(accountId) ?: return
+        val derivationIndex = account.derivationIndex
+
+        val receiveStartIndex = when (syncMode) {
+            SyncMode.FULL -> 0L
+            SyncMode.NORMAL -> params["current_receive_key_id"]?.jsonPrimitive?.long ?: 0L
+        }
+        val changeStartIndex = when (syncMode) {
+            SyncMode.FULL -> 0L
+            SyncMode.NORMAL -> params["current_change_key_id"]?.jsonPrimitive?.long ?: 0L
+        }
+
+        val client = createClient()
+        val transactions: List<TransactionInfo>
+        try {
+            val highestReceiveIndex = scanChain(client, accountId, RECEIVE_CHAIN, derivationIndex, receiveStartIndex) { deriveReceiveKey(derivationIndex, it) }
+            val highestChangeIndex = scanChain(client, accountId, CHANGE_CHAIN, derivationIndex, changeStartIndex) { deriveChangeKey(derivationIndex, it) }
+
+            val updates = mutableMapOf<String, JsonPrimitive>()
+            if (highestReceiveIndex != null) {
+                updates["current_receive_key_id"] = JsonPrimitive(highestReceiveIndex + 1)
+            }
+            if (highestChangeIndex != null) {
+                updates["current_change_key_id"] = JsonPrimitive(highestChangeIndex + 1)
+            }
+            if (updates.isNotEmpty()) {
+                val updatedParams = JsonObject(params.toMutableMap() + updates)
+                accountRepository.updateParams(accountId, updatedParams.toString())
+            }
+
+            // Fetch and persist transactions using same client
+            transactions = fetchTransactionsForAccount(account.id, derivationIndex, syncMode, client)
+            transactionRepository.upsertAll(transactions)
+        } finally {
+            client.close()
+        }
+
+        val rawBalance = balance(account.id)
+        val normalized = rawBalance.divide(BigDecimal.fromLong(100_000_000)).toPlainString()
+        accountRepository.updateAmount(account.id, normalized)
+        println("BtcProvider.sync() completed: accountId=$accountId, derivationIndex=$derivationIndex, balance=$normalized BTC, transactions=${transactions.size}")
+    }
+
+    private suspend fun fetchTransactionsForAccount(
+        accountId: String,
+        derivationIndex: Long,
+        syncMode: SyncMode,
+        client: HttpClient
+    ): List<TransactionInfo> {
+        val receiveStartIndex = when (syncMode) {
+            SyncMode.FULL -> 0L
+            SyncMode.NORMAL -> maxOf(0L, (params["current_receive_key_id"]?.jsonPrimitive?.long ?: 0L) - 1)
+        }
+        val changeStartIndex = when (syncMode) {
+            SyncMode.FULL -> 0L
+            SyncMode.NORMAL -> maxOf(0L, (params["current_change_key_id"]?.jsonPrimitive?.long ?: 0L) - 1)
+        }
+
+        val txWithContexts = mutableListOf<Pair<JsonObject, String>>()
+
+        // Scan receive chain
+        fetchTransactionsForChain(client, RECEIVE_CHAIN, receiveStartIndex) { deriveReceiveKey(derivationIndex, it) }
+            .forEach { txWithContexts.add(it) }
+
+        // Scan change chain
+        fetchTransactionsForChain(client, CHANGE_CHAIN, changeStartIndex) { deriveChangeKey(derivationIndex, it) }
+            .forEach { txWithContexts.add(it) }
+
+        return aggregateTransactions(txWithContexts, accountId)
+    }
+
+    private suspend fun fetchTransactionsForChain(
+        client: HttpClient,
+        chain: Int,
+        startIndex: Long,
+        deriveKey: (Long) -> DeterministicWallet.ExtendedPrivateKey
+    ): List<Pair<JsonObject, String>> {
+        val results = mutableListOf<Pair<JsonObject, String>>()
+        var consecutiveEmpty = 0
+        var addressIndex = startIndex
+
+        while (consecutiveEmpty < GAP_LIMIT) {
+            val key = deriveKey(addressIndex)
+            val address = Bitcoin.computeBIP84Address(key.publicKey, networkConfig.btcGenesisBlockHash)
+
+            val txs = fetchAddressTransactions(client, address)
+            if (txs.isEmpty()) {
+                consecutiveEmpty++
+            } else {
+                consecutiveEmpty = 0
+                for (tx in txs) {
+                    results.add(tx to address)
+                }
+            }
+            addressIndex++
+            delay(10)
+        }
+        return results
+    }
+
+    private suspend fun fetchAddressTransactions(client: HttpClient, address: String): List<JsonObject> {
+        return try {
+            val response: HttpResponse = client.get("${networkConfig.btcMempoolApiBase}/address/$address/txs")
+            if (response.status != HttpStatusCode.OK) {
+                println("fetchAddressTransactions: HTTP ${response.status.value} for $address")
+                return emptyList()
+            }
+            val body = response.body<String>()
+            val jsonArray = Json.parseToJsonElement(body).jsonArray
+            jsonArray.map { it.jsonObject }
+        } catch (e: Exception) {
+            println("fetchAddressTransactions: failed for $address — ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun aggregateTransactions(
+        txWithContexts: List<Pair<JsonObject, String>>,
+        accountId: String
+    ): List<TransactionInfo> {
+        if (txWithContexts.isEmpty()) return emptyList()
+
+        // Group by txid to handle multi-address aggregation
+        val grouped = txWithContexts.groupBy { (tx, _) ->
+            tx["txid"]?.jsonPrimitive?.content ?: return@groupBy ""
+        }.filterKeys { it.isNotEmpty() }
+
+        return grouped.mapNotNull { (txid, contexts) ->
+            val tx = contexts.first().first
+            val ownAddresses = contexts.map { it.second }.toSet().map { it.lowercase() }.toSet()
+
+            // Collect all input and output addresses
+            val vins = tx["vin"]?.jsonArray ?: return@mapNotNull null
+            val vouts = tx["vout"]?.jsonArray ?: return@mapNotNull null
+
+            // Check if any input spends from our address
+            val hasOurInput = vins.any { vin ->
+                val prevoutAddr = vin.jsonObject["prevout"]?.jsonObject
+                    ?.get("scriptpubkey_address")?.jsonPrimitive?.content
+                    ?.lowercase()
+                prevoutAddr != null && prevoutAddr in ownAddresses
+            }
+
+            val direction = if (hasOurInput) TransactionDirection.OUTGOING else TransactionDirection.INCOMING
+
+            // Amount calculation
+            val amount = when (direction) {
+                TransactionDirection.OUTGOING -> {
+                    // Sum vouts to non-own addresses (excludes change)
+                    vouts.sumOf { vout ->
+                        val addr = vout.jsonObject["scriptpubkey_address"]?.jsonPrimitive?.content?.lowercase()
+                        if (addr != null && addr !in ownAddresses) {
+                            vout.jsonObject["value"]?.jsonPrimitive?.long ?: 0L
+                        } else 0L
+                    }
+                }
+                TransactionDirection.INCOMING -> {
+                    // Sum vouts to own addresses
+                    vouts.sumOf { vout ->
+                        val addr = vout.jsonObject["scriptpubkey_address"]?.jsonPrimitive?.content?.lowercase()
+                        if (addr != null && addr in ownAddresses) {
+                            vout.jsonObject["value"]?.jsonPrimitive?.long ?: 0L
+                        } else 0L
+                    }
+                }
+                else -> 0L
+            }
+
+            // Counterparty address
+            val counterparty = when (direction) {
+                TransactionDirection.OUTGOING -> {
+                    vouts.firstOrNull { vout ->
+                        val addr = vout.jsonObject["scriptpubkey_address"]?.jsonPrimitive?.content?.lowercase()
+                        addr != null && addr !in ownAddresses
+                    }?.jsonObject?.get("scriptpubkey_address")?.jsonPrimitive?.content
+                }
+                TransactionDirection.INCOMING -> {
+                    vins.firstOrNull { vin ->
+                        val addr = vin.jsonObject["prevout"]?.jsonObject
+                            ?.get("scriptpubkey_address")?.jsonPrimitive?.content?.lowercase()
+                        addr != null && addr !in ownAddresses
+                    }?.jsonObject?.get("prevout")?.jsonObject
+                        ?.get("scriptpubkey_address")?.jsonPrimitive?.content
+                }
+                else -> null
+            }
+
+            // Fee from top-level field (satoshis)
+            val fee = tx["fee"]?.jsonPrimitive?.longOrNull?.toString()
+
+            // Status
+            val statusObj = tx["status"]?.jsonObject
+            val confirmed = statusObj?.get("confirmed")?.jsonPrimitive?.content?.toBoolean() ?: false
+            val blockHeight = if (confirmed) statusObj["block_height"]?.jsonPrimitive?.longOrNull else null
+            val blockTime = if (confirmed) statusObj["block_time"]?.jsonPrimitive?.longOrNull else null
+
+            val transactionStatus = if (confirmed) TransactionStatus.CONFIRMED else TransactionStatus.PENDING
+            val timestamp = if (blockTime != null) blockTime * 1000 else Clock.System.now().toEpochMilliseconds()
+
+            TransactionInfo(
+                id = "${accountId}_$txid",
+                accountId = accountId,
+                txHash = txid,
+                direction = direction,
+                amount = amount.toString(),
+                fee = fee,
+                timestamp = timestamp,
+                status = transactionStatus,
+                counterpartyAddress = counterparty,
+                blockHeight = blockHeight
+            )
+        }
+    }
+
+    private suspend fun scanChain(
+        client: HttpClient,
+        accountId: String,
+        chain: Int,
+        derivationIndex: Long,
+        startIndex: Long,
+        deriveKey: (Long) -> DeterministicWallet.ExtendedPrivateKey
+    ): Long? {
+        val existingUtxos = utxoRepository.getUtxosByAccount(accountId)
+        val existingTxids = existingUtxos.map { "${it.txid}:${it.vout}" }.toSet()
+
+        var consecutiveEmpty = 0
+        var addressIndex = startIndex
+        var highestUsedIndex: Long? = null  // highestUsedIndex is null means "no UTXOs found on this chain"
+
+        while (consecutiveEmpty < GAP_LIMIT) {
+            val key = deriveKey(addressIndex)
+            val address = Bitcoin.computeBIP84Address(key.publicKey, networkConfig.btcGenesisBlockHash)
+            val derivationPath = "m/84'/${networkConfig.btcBip84CoinType}'/$derivationIndex'/$chain/$addressIndex"
+
+            val utxos = fetchUtxos(client, address)
+            if (utxos.isEmpty()) {
+                consecutiveEmpty++
+            } else {
+                consecutiveEmpty = 0
+                highestUsedIndex = addressIndex
+                for (utxo in utxos) {
+                    val outpoint = "${utxo.txid}:${utxo.vout}"
+                    if (outpoint !in existingTxids) {
+                        utxoRepository.insertUtxo(
+                            UtxoInfo(
+                                accountId = accountId,
+                                derivationPath = derivationPath,
+                                amount = utxo.value,
+                                txid = utxo.txid,
+                                vout = utxo.vout.toInt()
+                            )
+                        )
+                    }
+                }
+            }
+            addressIndex++
+        }
+        return highestUsedIndex
+    }
+
+    private suspend fun fetchUtxos(client: HttpClient, address: String): List<Utxo> {
+        return try {
+            val response: HttpResponse = client.get("${networkConfig.btcMempoolApiBase}/address/$address/utxo")
+            if (response.status != HttpStatusCode.OK) {
+                println("fetchUtxos: HTTP ${response.status.value} for $address")
+                return emptyList()
+            }
+            val body = response.body<String>()
+            val jsonArray = Json.parseToJsonElement(body).jsonArray
+            jsonArray.map { elem ->
+                Utxo(
+                    txid = elem.jsonObject["txid"]!!.jsonPrimitive.content,
+                    vout = elem.jsonObject["vout"]!!.jsonPrimitive.long,
+                    value = elem.jsonObject["value"]!!.jsonPrimitive.long
+                )
+            }
+        } catch (e: Exception) {
+            println("fetchUtxos: failed for $address — ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun selectInputs(requiredAmount: Long, utxos: List<UtxoInfo>): List<UtxoInfo>? {
+        val sorted = utxos.sortedByDescending { it.amount }
+        val selected = mutableListOf<UtxoInfo>()
+        var sum = 0L
+        for (utxo in sorted) {
+            selected.add(utxo)
+            sum += utxo.amount
+            if (sum >= requiredAmount) {
+                return selected
+            }
+        }
+        return null
+    }
+
+    override suspend fun balance(accountId: String): BigDecimal {
+        val unspent = utxoRepository.getUtxosByAccount(accountId)
+        val totalSats = unspent.sumOf { it.amount }
+        return BigDecimal.fromLong(totalSats)
+    }
+
+    private suspend fun buildSignedTransaction(address: String, amount: BigDecimal, accountId: String): Triple<String, List<Long>, Boolean> {
+        val destAmountSat = amount.multiply(BigDecimal.fromLong(100_000_000)).longValue()
+
+        val allUtxos = utxoRepository.getUtxosByAccount(accountId)
+        check(allUtxos.isNotEmpty()) { "No UTXOs found for account $accountId" }
+
+        val selectedUtxos = selectInputs(destAmountSat, allUtxos)
+            ?: throw IllegalStateException("Not enough funds - have ${allUtxos.sumOf { it.amount }} sat but need $destAmountSat sat")
+
+        val fee = estimateVSize(selectedUtxos.size, 2) * fetchFeeRate()
+        val inputsSum = selectedUtxos.sumOf { it.amount }
+        val changeAmount = inputsSum - destAmountSat - fee
+
+        if (changeAmount < 0) {
+            throw IllegalStateException("Not enough funds to cover amount + fee (fee=$fee sat)")
+        }
+
+        val txIns = selectedUtxos.map { utxo ->
+            TxIn(
+                outPoint = OutPoint(TxId(utxo.txid), utxo.vout.toLong()),
+                sequence = 0xffffffffL
+            )
+        }
+
+        val scriptResult = Bitcoin.addressToPublicKeyScript(networkConfig.btcGenesisBlockHash, address)
+        check(scriptResult is Either.Right) { "Invalid destination address: $address" }
+        val destScript = scriptResult.value
+
+        val account = accountRepository.getAccount(accountId)
+            ?: throw IllegalStateException("Account not found: $accountId")
+        val changeAddressIndex = params["current_change_key_id"]?.jsonPrimitive?.long ?: 0L
+        val changeKey = deriveChangeKey(account.derivationIndex, changeAddressIndex)
+
+        val changeScript = Script.pay2wpkh(changeKey.publicKey)
+
+        val txOuts = mutableListOf(
+            TxOut(destAmountSat.toSatoshi(), destScript)
+        )
+        if (changeAmount > 0) {
+            txOuts.add(TxOut(changeAmount.toSatoshi(), changeScript))
+        }
+
+        var tx = Transaction(
+            version = 1,
+            txIn = txIns,
+            txOut = txOuts,
+            lockTime = 0
+        )
+
+        for (i in selectedUtxos.indices) {
+            val utxo = selectedUtxos[i]
+            val signingKey = deriveKeyFromPath(utxo.derivationPath)
+            val publicKey = signingKey.publicKey
+            val previousOutputScript = Script.pay2pkh(publicKey)
+
+            val sig = tx.signInput(
+                i,
+                previousOutputScript,
+                SigHash.SIGHASH_ALL,
+                utxo.amount.toSatoshi(),
+                SigVersion.SIGVERSION_WITNESS_V0,
+                signingKey.privateKey
+            )
+
+            val witness = Script.witnessPay2wpkh(publicKey, ByteVector(sig))
+            tx = tx.updateWitness(i, witness)
+        }
+
+        val txHex = Hex.encode(Transaction.write(tx))
+        return Triple(txHex, selectedUtxos.map { it.id }, changeAmount > 0)
+    }
+
+    override suspend fun estimateFee(accountId: String, amount: BigDecimal): BigDecimal {
+        val destAmountSat = amount.multiply(BigDecimal.fromLong(100_000_000)).longValue()
+        val allUtxos = utxoRepository.getUtxosByAccount(accountId)
+        val numInputs = if (allUtxos.isNotEmpty()) {
+            val selected = selectInputs(destAmountSat, allUtxos)
+            selected?.size ?: allUtxos.size
+        } else {
+            1
+        }
+        val feeSat = estimateVSize(numInputs, 2) * fetchFeeRate()
+        return BigDecimal.fromLong(feeSat).divide(BigDecimal.fromLong(100_000_000))
+    }
+
+    override suspend fun createTransaction(address: String, amount: BigDecimal, accountId: String): String {
+        return buildSignedTransaction(address, amount, accountId).first
+    }
+
+    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
+        val (txHex, spentUtxoIds, hasChange) = buildSignedTransaction(address, amount, accountId)
+
+        val client = createClient()
+        try {
+            val broadcastResponse: HttpResponse = client.post("${networkConfig.btcMempoolApiBase}/tx") {
+                contentType(ContentType.Text.Plain)
+                setBody(txHex)
+            }
+
+            if (broadcastResponse.status != HttpStatusCode.OK) {
+                val errorBody = broadcastResponse.body<String>()
+                throw IllegalStateException("Broadcast failed (${broadcastResponse.status.value}): $errorBody")
+            }
+
+            val txid = broadcastResponse.body<String>()
+
+            for (id in spentUtxoIds) {
+                utxoRepository.deleteUtxo(id)
+            }
+
+            if (hasChange) {
+                val currentIndex = params["current_change_key_id"]?.jsonPrimitive?.long ?: 0L
+                val updatedParams = JsonObject(params.toMutableMap() + ("current_change_key_id" to JsonPrimitive(currentIndex + 1)))
+                accountRepository.updateParams(accountId, updatedParams.toString())
+            }
+
+            return txid
+        } finally {
+            client.close()
+        }
+    }
+
+    private fun deriveKeyFromPath(path: String): DeterministicWallet.ExtendedPrivateKey {
+        val parts = path.removePrefix("m/").split("/")
+        val account = parts[2].removeSuffix("'").toLong()
+        val chain = parts[3].toLong()
+        val index = parts[4].toLong()
+        return masterKey.derivePrivateKey(
+            listOf(
+                DeterministicWallet.hardened(84),
+                DeterministicWallet.hardened(networkConfig.btcBip84CoinType),
+                DeterministicWallet.hardened(account),
+                chain,
+                index
+            )
+        )
+    }
+}
+
+private data class Utxo(
+    val txid: String,
+    val vout: Long,
+    val value: Long
+)

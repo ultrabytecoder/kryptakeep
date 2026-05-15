@@ -1,0 +1,142 @@
+CREATE TABLE wallets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    name TEXT NOT NULL,
+    master_seed BLOB NOT NULL,
+    encrypted_mnemonic BLOB
+);
+
+selectAllWallets:
+SELECT * FROM wallets;
+
+selectWalletById:
+SELECT * FROM wallets WHERE id = ?;
+
+insertWallet:
+INSERT OR REPLACE INTO wallets(id, name, master_seed, encrypted_mnemonic)
+VALUES (?, ?, ?, ?);
+
+lastInsertRowId:
+SELECT last_insert_rowid();
+
+deleteWalletById:
+DELETE FROM wallets WHERE id = ?;
+
+deleteAllWallets:
+DELETE FROM wallets;
+
+selectEncryptedMnemonicById:
+SELECT encrypted_mnemonic FROM wallets WHERE id = ?;
+
+renameWallet:
+UPDATE wallets SET name = ? WHERE id = ?;
+
+CREATE TABLE accounts (
+    id TEXT PRIMARY KEY NOT NULL,
+    wallet_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    type TEXT NOT NULL,
+    address TEXT,
+    derivation_index INTEGER NOT NULL,
+    params TEXT,
+    symbol TEXT NOT NULL,
+    FOREIGN KEY (wallet_id) REFERENCES wallets(id)
+);
+
+selectAll:
+SELECT * FROM accounts;
+
+selectById:
+SELECT * FROM accounts WHERE id = ?;
+
+selectByWalletId:
+SELECT * FROM accounts WHERE wallet_id = ?;
+
+maxDerivationIndexByWalletAndAccountType:
+SELECT MAX(derivation_index) AS max_index FROM accounts WHERE wallet_id = ? AND type = ?;
+
+insert:
+INSERT OR REPLACE INTO accounts(id, wallet_id, name, amount, type, address, derivation_index, params, symbol)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateAmount:
+UPDATE accounts SET amount = ? WHERE id = ?;
+
+updateParams:
+UPDATE accounts SET params = ? WHERE id = ?;
+
+deleteById:
+DELETE FROM accounts WHERE id = ?;
+
+deleteAll:
+DELETE FROM accounts;
+
+deleteAccountsByWalletId:
+DELETE FROM accounts WHERE wallet_id = ?;
+
+CREATE TABLE utxos (
+    id              INTEGER PRIMARY KEY,
+    account_id      TEXT NOT NULL,
+    derivation_path TEXT NOT NULL,
+    amount          INTEGER NOT NULL,
+    txid            TEXT NOT NULL,
+    vout            INTEGER NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES accounts(id)
+);
+
+selectAllUtxos:
+SELECT * FROM utxos;
+
+selectUtxosByAccountId:
+SELECT * FROM utxos WHERE account_id = ?;
+
+selectUtxoById:
+SELECT * FROM utxos WHERE id = ?;
+
+insertUtxo:
+INSERT INTO utxos(account_id, derivation_path, amount, txid, vout)
+VALUES (?, ?, ?, ?, ?);
+
+deleteUtxoById:
+DELETE FROM utxos WHERE id = ?;
+
+deleteUtxosByAccountId:
+DELETE FROM utxos WHERE account_id = ?;
+
+CREATE TABLE transactions (
+    id TEXT PRIMARY KEY NOT NULL,
+    account_id TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    fee TEXT,
+    timestamp INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'CONFIRMED',
+    counterparty_address TEXT,
+    block_height INTEGER,
+    chain_data TEXT,
+    FOREIGN KEY (account_id) REFERENCES accounts(id)
+);
+
+CREATE UNIQUE INDEX idx_transactions_tx_hash_account_id ON transactions(tx_hash, account_id);
+
+CREATE INDEX idx_transactions_account_timestamp ON transactions(account_id, timestamp DESC);
+
+selectTransactionsByAccount:
+SELECT * FROM transactions
+WHERE account_id = ?
+ORDER BY timestamp DESC
+LIMIT ? OFFSET ?;
+
+selectTransactionCountByAccount:
+SELECT COUNT(*) AS total_count FROM transactions WHERE account_id = ?;
+
+upsertTransaction:
+INSERT OR REPLACE INTO transactions(id, account_id, tx_hash, direction, amount, fee, timestamp, status, counterparty_address, block_height, chain_data)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteTransactionsByAccountId:
+DELETE FROM transactions WHERE account_id = ?;
+
+selectTransactionById:
+SELECT * FROM transactions WHERE id = ?;

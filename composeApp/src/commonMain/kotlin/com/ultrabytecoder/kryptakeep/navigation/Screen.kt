@@ -1,0 +1,32 @@
+package com.ultrabytecoder.kryptakeep.navigation
+
+import kotlinx.serialization.Serializable
+
+sealed interface Screen {
+    @Serializable
+    data object Startup : Screen
+
+    @Serializable
+    data object CreateWallet : Screen
+
+    @Serializable
+    data class AccountsList(val walletId: Long) : Screen
+
+    @Serializable
+    data class AccountDetails(val accountId: String) : Screen
+
+    @Serializable
+    data class Send(val accountId: String) : Screen
+
+    @Serializable
+    data class TransactionSent(val txId: String) : Screen
+
+    @Serializable
+    data class CreateAccount(val walletId: Long) : Screen
+
+    @Serializable
+    data class ExportMnemonic(val walletId: Long) : Screen
+
+    @Serializable
+    data object ManageWallets : Screen
+}

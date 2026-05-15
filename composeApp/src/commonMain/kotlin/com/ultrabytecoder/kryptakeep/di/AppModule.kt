@@ -1,0 +1,48 @@
+package com.ultrabytecoder.kryptakeep.di
+
+import com.ultrabytecoder.kryptakeep.data.DatabaseDriverFactory
+import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.db.KryptaKeepDatabase
+import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
+import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
+import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
+import com.ultrabytecoder.kryptakeep.domain.repository.WalletRepository
+import com.ultrabytecoder.kryptakeep.domain.service.KeyProvider
+import com.ultrabytecoder.kryptakeep.domain.usecase.CreateAccountUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.CreateWalletUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.EstimateFeeUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.GetAccountAddressUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.GetAccountsUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.GetWalletsUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.GetMnemonicUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.DeleteWalletUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.RenameWalletUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.SendUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.SyncAccountUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.SyncManager
+import com.ultrabytecoder.kryptakeep.domain.usecase.SyncUseCase
+import org.koin.dsl.module
+
+fun appModule(networkConfig: NetworkConfig) = module {
+    single { networkConfig }
+    single { KryptaKeepDatabase(get<DatabaseDriverFactory>().createDriver()) }
+    single<AccountRepository> { com.ultrabytecoder.kryptakeep.data.AccountRepository(get()) }
+    single<UtxoRepository> { com.ultrabytecoder.kryptakeep.data.UtxoRepository(get()) }
+    single<TransactionRepository> { com.ultrabytecoder.kryptakeep.data.TransactionRepository(get()) }
+    single<WalletRepository> { com.ultrabytecoder.kryptakeep.data.WalletRepository(get()) }
+    single<KeyProvider> { com.ultrabytecoder.kryptakeep.data.KeyProviderImpl(get(), get()) }
+
+    factory { CreateWalletUseCase(get(), get()) }
+    factory { GetMnemonicUseCase(get(), get()) }
+    factory { GetAccountsUseCase(get()) }
+    factory { CreateAccountUseCase(get()) }
+    factory { EstimateFeeUseCase(get(), get(), get(), get(), get()) }
+    factory { SendUseCase(get(), get(), get(), get(), get()) }
+    factory { GetAccountAddressUseCase(get(), get(), get(), get(), get()) }
+    factory { GetWalletsUseCase(get()) }
+    factory { DeleteWalletUseCase(get(), get(), get(), get()) }
+    factory { RenameWalletUseCase(get()) }
+    single { SyncManager() }
+    factory { SyncUseCase(get(), get(), get(), get(), get(), get()) }
+    factory { SyncAccountUseCase(get(), get(), get(), get(), get(), get()) }
+}
