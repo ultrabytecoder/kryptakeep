@@ -39,7 +39,7 @@ class Trc20TokenProvider(
     override suspend fun getAddress(accountId: String): String {
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
-        val key = deriveTrxKey(account.derivationIndex)
+        val key = deriveTrxKeyFromPath(account.derivationPath)
         return trxAddressFromDerivedKey(key)
     }
 
@@ -87,7 +87,7 @@ class Trc20TokenProvider(
 
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
-        val fromKey = deriveTrxKey(account.derivationIndex)
+        val fromKey = deriveTrxKeyFromPath(account.derivationPath)
         val fromAddress = getAddress(accountId)
 
         val client = createClient()

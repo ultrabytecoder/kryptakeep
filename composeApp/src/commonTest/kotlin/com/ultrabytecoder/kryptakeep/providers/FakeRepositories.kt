@@ -25,7 +25,8 @@ class FakeAccountRepository(
 ) : AccountRepository {
     override fun getAccountsByWalletFlow(walletId: Long): Flow<List<AccountInfo>> = flowOf(emptyList())
     override suspend fun getAccount(id: String): AccountInfo? = accounts[id]
-    override suspend fun getMaxDerivationIndexByWalletAndAccountType(walletId: Long, type: String): Long? = null
+    override suspend fun getMaxAccountIndexByWalletAndAccountType(walletId: Long, type: String): Long? = null
+    override suspend fun existsByDerivationPath(walletId: Long, derivationPath: String): Boolean = false
     override suspend fun insertAccount(account: AccountInfo) {}
     override suspend fun updateAmount(accountId: String, amount: String) {}
     override suspend fun updateParams(accountId: String, params: String) {}

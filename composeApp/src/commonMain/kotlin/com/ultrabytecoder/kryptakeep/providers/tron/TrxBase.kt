@@ -1,6 +1,7 @@
 package com.ultrabytecoder.kryptakeep.providers
 
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.providers.DerivationPathResolver
 import fr.acinq.bitcoin.Base58Check
 import fr.acinq.bitcoin.Crypto
 import fr.acinq.bitcoin.DeterministicWallet
@@ -23,16 +24,23 @@ abstract class TrxBase(
     protected val networkConfig: NetworkConfig
 ) {
 
-    protected fun deriveTrxKey(index: Long): DeterministicWallet.ExtendedPrivateKey {
+    protected fun deriveTrxKey(accountIndex: Long): DeterministicWallet.ExtendedPrivateKey {
         return masterKey.derivePrivateKey(
             listOf(
                 DeterministicWallet.hardened(44),
                 DeterministicWallet.hardened(195),
-                DeterministicWallet.hardened(0),
+                DeterministicWallet.hardened(accountIndex),
                 0L,
-                index
+                0L
             )
         )
+    }
+
+    protected fun deriveTrxKeyFromPath(path: String): DeterministicWallet.ExtendedPrivateKey {
+        val segments = DerivationPathResolver.parsePath(path).map { (index, hardened) ->
+            if (hardened) DeterministicWallet.hardened(index) else index
+        }
+        return masterKey.derivePrivateKey(segments)
     }
 
     protected fun trxAddressFromDerivedKey(key: DeterministicWallet.ExtendedPrivateKey): String {

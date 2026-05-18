@@ -1,6 +1,7 @@
 package com.ultrabytecoder.kryptakeep.providers.ton
 
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.providers.DerivationPathResolver
 import com.ultrabytecoder.kryptakeep.providers.ton.boc.*
 import com.ultrabytecoder.kryptakeep.providers.ton.wallet.WalletContract
 import com.ultrabytecoder.kryptakeep.providers.ton.wallet.WalletContractV3R2
@@ -47,6 +48,23 @@ abstract class TonBase(
             hardenedIdx(TON_COIN_TYPE),
             hardenedIdx(index.toInt()),
         ))
+        val privateKeySeed = key.copyOfRange(0, 32)
+        val privateKey = Ed25519.keyFromSeed(privateKeySeed)
+        val publicKeyBytes = privateKey.publicKey().toByteArray()
+        return Ed25519KeyPair(
+            privateKey = privateKey,
+            publicKey = publicKeyBytes,
+            privateKeySeed = privateKeySeed,
+        )
+    }
+
+    protected fun deriveTonKeyFromPath(path: String): Ed25519KeyPair {
+        val segments = DerivationPathResolver.parsePath(path)
+        val slip10Indices = segments.map { (index, _) ->
+            hardenedIdx(index.toInt())
+        }
+        val master = hmacSha512("ed25519 seed".toByteArray(), masterSeed)
+        val key = deriveSlip10Path(master, slip10Indices)
         val privateKeySeed = key.copyOfRange(0, 32)
         val privateKey = Ed25519.keyFromSeed(privateKeySeed)
         val publicKeyBytes = privateKey.publicKey().toByteArray()

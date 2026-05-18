@@ -56,7 +56,8 @@ class BtcProviderCreateTransactionTest {
 
     private fun testAccount(index: Long = 0) = AccountInfo(
         id = ACCOUNT_ID, walletId = 1, name = "Test", amount = "0",
-        type = AccountType.Btc, symbol = "BTC", address = null, derivationIndex = index
+        type = AccountType.Btc, symbol = "BTC", address = null, accountIndex = index,
+        derivationPath = "m/84'/1'/$index'"
     )
 
     private fun createProvider(
@@ -87,7 +88,7 @@ class BtcProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_returnsValidHexEncodedTransaction() = runTest {
-        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 1)
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 1, "m/84'/1'/1'")
         val provider = createProvider(listOf(testUtxo()), destAccount = dest)
         val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
         val amount = BigDecimal.fromLong(1).divide(BigDecimal.fromLong(1000))
@@ -100,7 +101,7 @@ class BtcProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_throwsWhenNoUtxos() = runTest {
-        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 1)
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 1, "m/84'/1'/1'")
         val provider = createProvider(emptyList(), destAccount = dest)
         val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
         val amount = BigDecimal.fromLong(1).divide(BigDecimal.fromLong(1000))
@@ -112,7 +113,7 @@ class BtcProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_throwsWhenInsufficientFunds() = runTest {
-        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 1)
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 1, "m/84'/1'/1'")
         val provider = createProvider(listOf(testUtxo(amount = 100)), destAccount = dest)
         val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
         val amount = BigDecimal.fromLong(1)
@@ -124,7 +125,7 @@ class BtcProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_isDeterministic() = runTest {
-        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 1)
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 1, "m/84'/1'/1'")
         val provider = createProvider(listOf(testUtxo()), destAccount = dest)
         val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
         val amount = BigDecimal.fromLong(1).divide(BigDecimal.fromLong(1000))
@@ -137,7 +138,7 @@ class BtcProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_differentAmountsProduceDifferentTransactions() = runTest {
-        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 1)
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 1, "m/84'/1'/1'")
         val provider = createProvider(listOf(testUtxo()), destAccount = dest)
         val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
 
@@ -149,7 +150,7 @@ class BtcProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_selectsFromMultipleUtxos() = runTest {
-        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 2)
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Btc, "BTC", null, 2, "m/84'/1'/2'")
         val provider = createProvider(listOf(
             testUtxo(id = 1, amount = 60_000),
             testUtxo(id = 2, amount = 60_000, derivationPath = "m/84'/1'/0'/0/1", txid = "b1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2")

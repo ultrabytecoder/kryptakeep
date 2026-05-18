@@ -41,6 +41,7 @@ import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.data.TokenInfo
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CreateAccountViewModel
 import com.ultrabytecoder.kryptakeep.domain.model.AccountType as DomainAccountType
+import com.ultrabytecoder.kryptakeep.providers.DerivationPathResolver
 import org.koin.compose.koinInject
 
 private data class AccountTypeUi(
@@ -89,10 +90,19 @@ fun CreateAccountScreen(
     viewModel: CreateAccountViewModel
 ) {
     var selectedType by remember { mutableStateOf<DomainAccountType?>(null) }
+    var derivationPath by remember { mutableStateOf("") }
+    var isPathValid by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     val networkConfig: NetworkConfig = koinInject()
     val accountTypes = remember(networkConfig) {
         buildAccountTypes(networkConfig.erc20Tokens, networkConfig.trc20Tokens)
+    }
+
+    LaunchedEffect(selectedType) {
+        if (selectedType != null) {
+            derivationPath = viewModel.getDefaultDerivationPath(selectedType!!)
+            isPathValid = true
+        }
     }
 
     Scaffold(
@@ -143,18 +153,45 @@ fun CreateAccountScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            if (selectedType != null) {
+                Text(
+                    "Derivation Path",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = derivationPath,
+                    onValueChange = { newPath ->
+                        derivationPath = newPath
+                        isPathValid = DerivationPathResolver.isValidPath(newPath, selectedType!!)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true,
+                    isError = !isPathValid,
+                    supportingText = {
+                        if (!isPathValid) {
+                            Text("Invalid derivation path format")
+                        }
+                    }
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             Button(
                 onClick = {
                     val type = selectedType ?: return@Button
                     val ui = accountTypes[type]
                     val displayName = ui?.displayName ?: "Wallet"
                     val tickerSymbol = ui?.tickerSymbol ?: type.type
+                    val path = derivationPath.ifBlank { null }
                     scope.launch {
-                        viewModel.createAccount(displayName, type, tickerSymbol)
+                        viewModel.createAccount(displayName, type, tickerSymbol, derivationPath = path)
                         navController.popBackStack()
                     }
                 },
-                enabled = selectedType != null,
+                enabled = selectedType != null && isPathValid && derivationPath.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
             ) {

@@ -35,15 +35,20 @@ class AccountRepository(database: KryptaKeepDatabase) : AccountRepositoryInterfa
                 amount = account.amount,
                 type = account.type.toDbCode(),
                 address = account.address,
-                derivation_index = account.derivationIndex,
+                account_index = account.accountIndex,
+                derivation_path = account.derivationPath,
                 params = account.params ?: account.type.toParamsJson(),
                 symbol = account.symbol
             )
         }
     }
 
-    override suspend fun getMaxDerivationIndexByWalletAndAccountType(walletId: Long, type: String): Long? = withContext(Dispatchers.IO) {
+    override suspend fun getMaxAccountIndexByWalletAndAccountType(walletId: Long, type: String): Long? = withContext(Dispatchers.IO) {
         queries.maxDerivationIndexByWalletAndAccountType(walletId, type).executeAsOne().max_index
+    }
+
+    override suspend fun existsByDerivationPath(walletId: Long, derivationPath: String): Boolean = withContext(Dispatchers.IO) {
+        queries.existsByDerivationPath(walletId, derivationPath).executeAsOne()
     }
 
     override suspend fun updateAmount(accountId: String, amount: String) {
@@ -78,7 +83,8 @@ class AccountRepository(database: KryptaKeepDatabase) : AccountRepositoryInterfa
         type = AccountType.fromCode(type, params),
         symbol = symbol,
         address = address,
-        derivationIndex = derivation_index,
+        accountIndex = account_index,
+        derivationPath = derivation_path,
         params = params
     )
 }

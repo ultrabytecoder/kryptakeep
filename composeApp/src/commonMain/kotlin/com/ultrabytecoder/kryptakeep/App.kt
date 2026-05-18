@@ -132,8 +132,10 @@ fun App() {
             composable<Screen.CreateAccount> { backStackEntry ->
                 val route = backStackEntry.toRoute<Screen.CreateAccount>()
                 val createAccount: CreateAccountUseCase = koinInject()
+                val accountRepository: com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository = koinInject()
+                val networkConfig: com.ultrabytecoder.kryptakeep.data.NetworkConfig = koinInject()
                 val viewModel = remember(route.walletId) {
-                    CreateAccountViewModel(route.walletId, createAccount)
+                    CreateAccountViewModel(route.walletId, createAccount, accountRepository, networkConfig)
                 }
                 CreateAccountScreen(navController, viewModel)
             }

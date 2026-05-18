@@ -35,7 +35,7 @@ fun appModule(networkConfig: NetworkConfig) = module {
     factory { CreateWalletUseCase(get(), get()) }
     factory { GetMnemonicUseCase(get(), get()) }
     factory { GetAccountsUseCase(get()) }
-    factory { CreateAccountUseCase(get()) }
+    factory { CreateAccountUseCase(get(), get()) }
     factory { EstimateFeeUseCase(get(), get(), get(), get(), get()) }
     factory { SendUseCase(get(), get(), get(), get(), get()) }
     factory { GetAccountAddressUseCase(get(), get(), get(), get(), get()) }

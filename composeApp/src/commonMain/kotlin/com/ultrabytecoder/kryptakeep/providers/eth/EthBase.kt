@@ -1,6 +1,7 @@
 package com.ultrabytecoder.kryptakeep.providers
 
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.providers.DerivationPathResolver
 import fr.acinq.bitcoin.Crypto
 import fr.acinq.bitcoin.DeterministicWallet
 import fr.acinq.bitcoin.PublicKey
@@ -21,16 +22,23 @@ abstract class EthBase(
     protected val networkConfig: NetworkConfig
 ) {
 
-    protected fun deriveEthKey(index: Long): DeterministicWallet.ExtendedPrivateKey {
+    protected fun deriveEthKey(accountIndex: Long): DeterministicWallet.ExtendedPrivateKey {
         return masterKey.derivePrivateKey(
             listOf(
                 DeterministicWallet.hardened(44),
                 DeterministicWallet.hardened(60),
-                DeterministicWallet.hardened(0),
+                DeterministicWallet.hardened(accountIndex),
                 0L,
-                index
+                0L
             )
         )
+    }
+
+    protected fun deriveEthKeyFromPath(path: String): DeterministicWallet.ExtendedPrivateKey {
+        val segments = DerivationPathResolver.parsePath(path).map { (index, hardened) ->
+            if (hardened) DeterministicWallet.hardened(index) else index
+        }
+        return masterKey.derivePrivateKey(segments)
     }
 
     protected fun ethAddressFromPublicKey(key: DeterministicWallet.ExtendedPrivateKey): String {

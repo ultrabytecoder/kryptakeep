@@ -35,7 +35,7 @@ class Erc20TokenProvider(
     override suspend fun getAddress(accountId: String): String {
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
-        val key = deriveEthKey(account.derivationIndex)
+        val key = deriveEthKeyFromPath(account.derivationPath)
         return ethAddressFromPublicKey(key)
     }
 
@@ -180,7 +180,7 @@ class Erc20TokenProvider(
 
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
-        val fromKey = deriveEthKey(account.derivationIndex)
+        val fromKey = deriveEthKeyFromPath(account.derivationPath)
         val fromAddress = ethAddressFromPublicKey(fromKey)
 
         val client = createClient()

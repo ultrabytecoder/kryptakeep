@@ -107,7 +107,8 @@ class Trc20TokenProviderSyncTest {
 
     private fun testAccount(index: Long = 0) = AccountInfo(
         id = ACCOUNT_ID, walletId = 1, name = "Test", amount = "0",
-        type = AccountType.Trx, symbol = "TRX", address = null, derivationIndex = index
+        type = AccountType.Trx, symbol = "TRX", address = null, accountIndex = index,
+        derivationPath = "m/44'/195'/$index'/0/0"
     )
 
     private fun createMockClientFactory(
@@ -155,7 +156,7 @@ class Trc20TokenProviderSyncTest {
         createClient: () -> HttpClient = createMockClientFactory()
     ): Trc20TokenProvider {
         val masterKey = DeterministicWallet.generate(Hex.decode(SEED_HEX))
-        val destAccount = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Trx, "TRX", null, 1)
+        val destAccount = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Trx, "TRX", null, 1, "m/44'/195'/1'/0/0")
         return Trc20TokenProvider(
             masterKey,
             FakeAccountRepository(mapOf(ACCOUNT_ID to account, DEST_ACCOUNT_ID to destAccount)),

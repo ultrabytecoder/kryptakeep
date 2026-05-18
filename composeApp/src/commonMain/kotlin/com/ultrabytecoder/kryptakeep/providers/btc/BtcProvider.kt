@@ -3,6 +3,7 @@ package com.ultrabytecoder.kryptakeep.providers
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import kotlinx.coroutines.delay
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.providers.DerivationPathResolver
 import com.ultrabytecoder.kryptakeep.domain.model.UtxoInfo
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
@@ -31,6 +32,7 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionStatus
@@ -131,10 +133,26 @@ class BtcProvider(
         )
     }
 
+    private fun deriveReceiveKeyFromPath(accountPath: String, addressIndex: Long): DeterministicWallet.ExtendedPrivateKey {
+        val segments = DerivationPathResolver.parsePath(accountPath).map { (index, hardened) ->
+            if (hardened) DeterministicWallet.hardened(index) else index
+        }
+        return masterKey.derivePrivateKey(segments + listOf(0L, addressIndex))
+    }
+
+    private fun deriveChangeKeyFromPath(accountPath: String, addressIndex: Long): DeterministicWallet.ExtendedPrivateKey {
+        val segments = DerivationPathResolver.parsePath(accountPath).map { (index, hardened) ->
+            if (hardened) DeterministicWallet.hardened(index) else index
+        }
+        return masterKey.derivePrivateKey(segments + listOf(1L, addressIndex))
+    }
+
     override suspend fun getAddress(accountId: String): String {
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
-        return ourAddress(account.derivationIndex)
+        val addressIndex = params["current_receive_key_id"]?.jsonPrimitive?.long ?: 0L
+        val key = deriveReceiveKeyFromPath(account.derivationPath, addressIndex)
+        return Bitcoin.computeBIP84Address(key.publicKey, networkConfig.btcGenesisBlockHash)
     }
 
     private fun ourAddress(index: Long): String {
@@ -143,10 +161,18 @@ class BtcProvider(
         return Bitcoin.computeBIP84Address(derivedKey.publicKey, networkConfig.btcGenesisBlockHash)
     }
 
+    private fun resolveDeriveFunctions(account: AccountInfo): Pair<(Long) -> DeterministicWallet.ExtendedPrivateKey, (Long) -> DeterministicWallet.ExtendedPrivateKey> {
+        val path = account.derivationPath
+        val receiveDeriver: (Long) -> DeterministicWallet.ExtendedPrivateKey = { addrIdx -> deriveReceiveKeyFromPath(path, addrIdx) }
+        val changeDeriver: (Long) -> DeterministicWallet.ExtendedPrivateKey = { addrIdx -> deriveChangeKeyFromPath(path, addrIdx) }
+        return receiveDeriver to changeDeriver
+    }
+
     override suspend fun sync(accountId: String, syncMode: SyncMode) {
         println("BtcProvider.sync() started: accountId=$accountId, syncMode=$syncMode")
         val account = accountRepository.getAccount(accountId) ?: return
-        val derivationIndex = account.derivationIndex
+        val derivationIndex = account.accountIndex
+        val (receiveDeriver, changeDeriver) = resolveDeriveFunctions(account)
 
         val receiveStartIndex = when (syncMode) {
             SyncMode.FULL -> 0L
@@ -160,8 +186,8 @@ class BtcProvider(
         val client = createClient()
         val transactions: List<TransactionInfo>
         try {
-            val highestReceiveIndex = scanChain(client, accountId, RECEIVE_CHAIN, derivationIndex, receiveStartIndex) { deriveReceiveKey(derivationIndex, it) }
-            val highestChangeIndex = scanChain(client, accountId, CHANGE_CHAIN, derivationIndex, changeStartIndex) { deriveChangeKey(derivationIndex, it) }
+            val highestReceiveIndex = scanChain(client, accountId, RECEIVE_CHAIN, derivationIndex, receiveStartIndex, receiveDeriver)
+            val highestChangeIndex = scanChain(client, accountId, CHANGE_CHAIN, derivationIndex, changeStartIndex, changeDeriver)
 
             val updates = mutableMapOf<String, JsonPrimitive>()
             if (highestReceiveIndex != null) {
@@ -176,7 +202,7 @@ class BtcProvider(
             }
 
             // Fetch and persist transactions using same client
-            transactions = fetchTransactionsForAccount(account.id, derivationIndex, syncMode, client)
+            transactions = fetchTransactionsForAccount(account.id, syncMode, client, receiveDeriver, changeDeriver)
             transactionRepository.upsertAll(transactions)
         } finally {
             client.close()
@@ -190,9 +216,10 @@ class BtcProvider(
 
     private suspend fun fetchTransactionsForAccount(
         accountId: String,
-        derivationIndex: Long,
         syncMode: SyncMode,
-        client: HttpClient
+        client: HttpClient,
+        receiveDeriver: (Long) -> DeterministicWallet.ExtendedPrivateKey,
+        changeDeriver: (Long) -> DeterministicWallet.ExtendedPrivateKey
     ): List<TransactionInfo> {
         val receiveStartIndex = when (syncMode) {
             SyncMode.FULL -> 0L
@@ -206,11 +233,11 @@ class BtcProvider(
         val txWithContexts = mutableListOf<Pair<JsonObject, String>>()
 
         // Scan receive chain
-        fetchTransactionsForChain(client, RECEIVE_CHAIN, receiveStartIndex) { deriveReceiveKey(derivationIndex, it) }
+        fetchTransactionsForChain(client, RECEIVE_CHAIN, receiveStartIndex, receiveDeriver)
             .forEach { txWithContexts.add(it) }
 
         // Scan change chain
-        fetchTransactionsForChain(client, CHANGE_CHAIN, changeStartIndex) { deriveChangeKey(derivationIndex, it) }
+        fetchTransactionsForChain(client, CHANGE_CHAIN, changeStartIndex, changeDeriver)
             .forEach { txWithContexts.add(it) }
 
         return aggregateTransactions(txWithContexts, accountId)
@@ -220,7 +247,7 @@ class BtcProvider(
         client: HttpClient,
         chain: Int,
         startIndex: Long,
-        deriveKey: (Long) -> DeterministicWallet.ExtendedPrivateKey
+        deriveKey: (Long) -> DeterministicWallet.ExtendedPrivateKey = { deriveReceiveKey(0L, it) }
     ): List<Pair<JsonObject, String>> {
         val results = mutableListOf<Pair<JsonObject, String>>()
         var consecutiveEmpty = 0
@@ -365,7 +392,7 @@ class BtcProvider(
         chain: Int,
         derivationIndex: Long,
         startIndex: Long,
-        deriveKey: (Long) -> DeterministicWallet.ExtendedPrivateKey
+        deriveKey: (Long) -> DeterministicWallet.ExtendedPrivateKey = { deriveReceiveKey(derivationIndex, it) }
     ): Long? {
         val existingUtxos = utxoRepository.getUtxosByAccount(accountId)
         val existingTxids = existingUtxos.map { "${it.txid}:${it.vout}" }.toSet()
@@ -478,7 +505,7 @@ class BtcProvider(
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalStateException("Account not found: $accountId")
         val changeAddressIndex = params["current_change_key_id"]?.jsonPrimitive?.long ?: 0L
-        val changeKey = deriveChangeKey(account.derivationIndex, changeAddressIndex)
+        val changeKey = deriveChangeKeyFromPath(account.derivationPath, changeAddressIndex)
 
         val changeScript = Script.pay2wpkh(changeKey.publicKey)
 

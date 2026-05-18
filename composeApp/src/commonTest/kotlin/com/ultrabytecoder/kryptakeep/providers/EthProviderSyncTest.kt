@@ -114,7 +114,8 @@ class EthProviderSyncTest {
 
     private fun testAccount(index: Long = 0) = AccountInfo(
         id = ACCOUNT_ID, walletId = 1, name = "Test", amount = "0",
-        type = AccountType.Eth, symbol = "ETH", address = null, derivationIndex = index
+        type = AccountType.Eth, symbol = "ETH", address = null, accountIndex = index,
+        derivationPath = "m/44'/60'/$index'/0/0"
     )
 
     private fun createMockClientFactory(
@@ -335,7 +336,8 @@ class EthProviderSyncTest {
             private val accounts = mutableMapOf(ACCOUNT_ID to testAccount())
             override fun getAccountsByWalletFlow(walletId: Long) = kotlinx.coroutines.flow.flowOf(emptyList<AccountInfo>())
             override suspend fun getAccount(id: String) = accounts[id]
-            override suspend fun getMaxDerivationIndexByWalletAndAccountType(walletId: Long, type: String): Long? = null
+            override suspend fun getMaxAccountIndexByWalletAndAccountType(walletId: Long, type: String): Long? = null
+            override suspend fun existsByDerivationPath(walletId: Long, derivationPath: String): Boolean = false
             override suspend fun insertAccount(account: AccountInfo) {}
             override suspend fun updateAmount(accountId: String, amount: String) {}
             override suspend fun updateParams(accountId: String, params: String) { updatedParams = params }

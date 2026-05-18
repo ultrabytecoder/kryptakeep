@@ -56,7 +56,7 @@ class EthProviderCreateTransactionTest {
 
     private fun createProvider(createClient: () -> HttpClient = mockEthFactory()): EthProvider {
         val masterKey = DeterministicWallet.generate(Hex.decode(SEED_HEX))
-        val account = AccountInfo(ACCOUNT_ID, 1, "Test", "0", AccountType.Eth, "ETH", null, 0)
+        val account = AccountInfo(ACCOUNT_ID, 1, "Test", "0", AccountType.Eth, "ETH", null, 0, "m/44'/60'/0'/0/0")
         return EthProvider(masterKey, FakeAccountRepository(mapOf(ACCOUNT_ID to account)), JsonObject(emptyMap()), NetworkConfig.testnet("test-api-key"), createClient, FakeTransactionRepository())
     }
 

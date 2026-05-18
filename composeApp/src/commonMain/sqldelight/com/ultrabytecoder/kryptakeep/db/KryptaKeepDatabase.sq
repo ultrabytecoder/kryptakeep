@@ -37,7 +37,8 @@ CREATE TABLE accounts (
     amount TEXT NOT NULL,
     type TEXT NOT NULL,
     address TEXT,
-    derivation_index INTEGER NOT NULL,
+    account_index INTEGER NOT NULL,
+    derivation_path TEXT NOT NULL,
     params TEXT,
     symbol TEXT NOT NULL,
     FOREIGN KEY (wallet_id) REFERENCES wallets(id)
@@ -53,11 +54,14 @@ selectByWalletId:
 SELECT * FROM accounts WHERE wallet_id = ?;
 
 maxDerivationIndexByWalletAndAccountType:
-SELECT MAX(derivation_index) AS max_index FROM accounts WHERE wallet_id = ? AND type = ?;
+SELECT MAX(account_index) AS max_index FROM accounts WHERE wallet_id = ? AND type = ?;
+
+existsByDerivationPath:
+SELECT EXISTS(SELECT 1 FROM accounts WHERE wallet_id = ? AND derivation_path = ?);
 
 insert:
-INSERT OR REPLACE INTO accounts(id, wallet_id, name, amount, type, address, derivation_index, params, symbol)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO accounts(id, wallet_id, name, amount, type, address, account_index, derivation_path, params, symbol)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 updateAmount:
 UPDATE accounts SET amount = ? WHERE id = ?;

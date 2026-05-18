@@ -29,7 +29,8 @@ class TonProviderCreateTransactionTest {
 
     private fun testAccount(index: Long = 0) = AccountInfo(
         id = ACCOUNT_ID, walletId = 1, name = "Test", amount = "0",
-        type = AccountType.Ton, symbol = "TON", address = null, derivationIndex = index
+        type = AccountType.Ton, symbol = "TON", address = null, accountIndex = index,
+        derivationPath = "m/44'/607'/$index'"
     )
 
     private fun createProvider(account: AccountInfo = testAccount(), destAccount: AccountInfo? = null): TonProvider {
@@ -61,7 +62,7 @@ class TonProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_returnsNonEmptyString() = runTest {
-        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1)
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1, "m/44'/607'/1'")
         val provider = createProvider(destAccount = dest)
         val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
         val amount = BigDecimal.fromLong(1).divide(BigDecimal.fromLong(1000))
@@ -73,7 +74,7 @@ class TonProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_returnsValidBase64() = runTest {
-        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1)
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1, "m/44'/607'/1'")
         val provider = createProvider(destAccount = dest)
         val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
         val amount = BigDecimal.fromLong(1).divide(BigDecimal.fromLong(1000))
@@ -86,7 +87,7 @@ class TonProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_isDeterministic() = runTest {
-        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1)
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1, "m/44'/607'/1'")
         val provider = createProvider(destAccount = dest)
         val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
         val amount = BigDecimal.fromLong(1).divide(BigDecimal.fromLong(1000))
@@ -99,7 +100,7 @@ class TonProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_differentAmountsProduceDifferentResults() = runTest {
-        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1)
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1, "m/44'/607'/1'")
         val provider = createProvider(destAccount = dest)
         val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
 
@@ -111,8 +112,8 @@ class TonProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_differentAddressesProduceDifferentResults() = runTest {
-        val dest1 = AccountInfo("dest1", 1, "Dest1", "0", AccountType.Ton, "TON", null, 1)
-        val dest2 = AccountInfo("dest2", 1, "Dest2", "0", AccountType.Ton, "TON", null, 2)
+        val dest1 = AccountInfo("dest1", 1, "Dest1", "0", AccountType.Ton, "TON", null, 1, "m/44'/607'/1'")
+        val dest2 = AccountInfo("dest2", 1, "Dest2", "0", AccountType.Ton, "TON", null, 2, "m/44'/607'/2'")
         val provider = createProvider(destAccount = dest1)
         val provider2 = createProvider(destAccount = dest2)
         val amount = BigDecimal.fromLong(1).divide(BigDecimal.fromLong(1000))

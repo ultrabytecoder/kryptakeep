@@ -36,7 +36,7 @@ class EthProvider(
     override suspend fun getAddress(accountId: String): String {
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
-        val key = deriveEthKey(account.derivationIndex)
+        val key = deriveEthKeyFromPath(account.derivationPath)
         return ethAddressFromPublicKey(key)
     }
 
@@ -163,7 +163,7 @@ class EthProvider(
         val weiAmount = amount.multiply(BigDecimal.fromLong(1_000_000_000_000_000_000)).longValue()
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
-        val fromKey = deriveEthKey(account.derivationIndex)
+        val fromKey = deriveEthKeyFromPath(account.derivationPath)
         val fromAddress = ethAddressFromPublicKey(fromKey)
 
         val client = createClient()

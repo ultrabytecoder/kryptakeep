@@ -39,7 +39,7 @@ class TonProvider(
     override suspend fun getAddress(accountId: String): String {
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
-        val keyPair = deriveTonKey(account.derivationIndex)
+        val keyPair = deriveTonKeyFromPath(account.derivationPath)
         return tonAddressFromPublicKey(keyPair.publicKey)
     }
 
@@ -72,7 +72,7 @@ class TonProvider(
         val nanotons = amount.multiply(BigDecimal.fromLong(networkConfig.tonNanotonsPerTon)).longValue(exactRequired = false)
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
-        val keyPair = deriveTonKey(account.derivationIndex)
+        val keyPair = deriveTonKeyFromPath(account.derivationPath)
         val wallet = WalletContractV3R2.create(0, keyPair.publicKey)
         val destAddress = TonAddress.parse(address)
 

@@ -184,7 +184,8 @@ class BtcProviderSyncTest {
 
     private fun testAccount(index: Long = 0) = AccountInfo(
         id = ACCOUNT_ID, walletId = 1, name = "Test", amount = "0",
-        type = AccountType.Btc, symbol = "BTC", address = null, derivationIndex = index
+        type = AccountType.Btc, symbol = "BTC", address = null, accountIndex = index,
+        derivationPath = "m/84'/1'/$index'"
     )
 
     private fun deriveAddresses(): Pair<String, String> {
