@@ -189,7 +189,7 @@ private fun BalanceCard(account: AccountInfo) {
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = account.accountIndex.toString(),
+                text = account.derivationPath,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
