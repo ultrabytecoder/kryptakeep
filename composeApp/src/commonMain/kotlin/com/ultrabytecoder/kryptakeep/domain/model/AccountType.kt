@@ -18,6 +18,7 @@ sealed class AccountType(val type: String) {
     fun toParamsJson(): String? = when (this) {
         is Erc20 -> """{"tokenAddress":"$tokenAddress"}"""
         is Trc20 -> """{"tokenAddress":"$tokenAddress"}"""
+        is Ton -> """{"walletVersion":"V3R2"}"""
         else -> null
     }
 

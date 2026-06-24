@@ -13,6 +13,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -33,7 +34,11 @@ class TonProviderCreateTransactionTest {
         derivationPath = "m/44'/607'/$index'"
     )
 
-    private fun createProvider(account: AccountInfo = testAccount(), destAccount: AccountInfo? = null): TonProvider {
+    private fun createProvider(
+        account: AccountInfo = testAccount(),
+        destAccount: AccountInfo? = null,
+        params: JsonObject = JsonObject(emptyMap())
+    ): TonProvider {
         val accounts = mutableMapOf(ACCOUNT_ID to account)
         destAccount?.let { accounts[it.id] = it }
         val mockClient: () -> HttpClient = {
@@ -57,8 +62,17 @@ class TonProviderCreateTransactionTest {
                 }
             }
         }
-        return TonProvider(Hex.decode(SEED_HEX), FakeAccountRepository(accounts), JsonObject(emptyMap()), NetworkConfig.testnet("test-api-key"), FakeTransactionRepository(), mockClient)
+        return TonProvider(
+            Hex.decode(SEED_HEX),
+            FakeAccountRepository(accounts),
+            params,
+            NetworkConfig.testnet("test-api-key"),
+            FakeTransactionRepository(),
+            mockClient
+        )
     }
+
+    private fun v4Params(): JsonObject = JsonObject(mapOf("walletVersion" to JsonPrimitive("V4R2")))
 
     @Test
     fun createTransaction_returnsNonEmptyString() = runTest {
@@ -122,5 +136,62 @@ class TonProviderCreateTransactionTest {
         val result2 = provider2.createTransaction(provider2.getAddress("dest2"), amount, ACCOUNT_ID)
 
         assertNotEquals(result1, result2)
+    }
+
+    @Test
+    fun v4_createTransaction_returnsNonEmptyString() = runTest {
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1, "m/44'/607'/1'")
+        val provider = createProvider(destAccount = dest, params = v4Params())
+        val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
+        val amount = BigDecimal.fromLong(1).divide(BigDecimal.fromLong(1000))
+
+        val result = provider.createTransaction(destAddress, amount, ACCOUNT_ID)
+
+        assertTrue(result.isNotEmpty(), "V4 BOC base64 should not be empty")
+    }
+
+    @Test
+    fun v4_and_v3_produceDifferentTransactions() = runTest {
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1, "m/44'/607'/1'")
+        val v3Provider = createProvider(destAccount = dest)
+        val v4Provider = createProvider(destAccount = dest, params = v4Params())
+        val amount = BigDecimal.fromLong(1).divide(BigDecimal.fromLong(1000))
+
+        val v3DestAddress = v3Provider.getAddress(DEST_ACCOUNT_ID)
+        val v4DestAddress = v4Provider.getAddress(DEST_ACCOUNT_ID)
+
+        // V3 and V4 wallets have different addresses for the same key
+        assertNotEquals(v3DestAddress, v4DestAddress)
+
+        val v3Result = v3Provider.createTransaction(v3DestAddress, amount, ACCOUNT_ID)
+        val v4Result = v4Provider.createTransaction(v4DestAddress, amount, ACCOUNT_ID)
+
+        // The resulting BOC should differ (different wallet contract code + signing message layout)
+        assertNotEquals(v3Result, v4Result)
+    }
+
+    @Test
+    fun v4_getAddress_differsFromV3() = runTest {
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1, "m/44'/607'/1'")
+        val v3Provider = createProvider(destAccount = dest)
+        val v4Provider = createProvider(destAccount = dest, params = v4Params())
+
+        val v3Address = v3Provider.getAddress(DEST_ACCOUNT_ID)
+        val v4Address = v4Provider.getAddress(DEST_ACCOUNT_ID)
+
+        assertNotEquals(v3Address, v4Address)
+    }
+
+    @Test
+    fun v4_createTransaction_isDeterministic() = runTest {
+        val dest = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Ton, "TON", null, 1, "m/44'/607'/1'")
+        val provider = createProvider(destAccount = dest, params = v4Params())
+        val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
+        val amount = BigDecimal.fromLong(1).divide(BigDecimal.fromLong(1000))
+
+        val result1 = provider.createTransaction(destAddress, amount, ACCOUNT_ID)
+        val result2 = provider.createTransaction(destAddress, amount, ACCOUNT_ID)
+
+        assertEquals(result1, result2)
     }
 }

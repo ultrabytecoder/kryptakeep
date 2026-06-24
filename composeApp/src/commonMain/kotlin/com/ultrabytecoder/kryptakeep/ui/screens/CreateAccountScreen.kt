@@ -92,11 +92,13 @@ fun CreateAccountScreen(
     var selectedType by remember { mutableStateOf<DomainAccountType?>(null) }
     var derivationPath by remember { mutableStateOf("") }
     var isPathValid by remember { mutableStateOf(true) }
+    var selectedTonWalletVersion by remember { mutableStateOf("V3R2") }
     val scope = rememberCoroutineScope()
     val networkConfig: NetworkConfig = koinInject()
     val accountTypes = remember(networkConfig) {
         buildAccountTypes(networkConfig.erc20Tokens, networkConfig.trc20Tokens)
     }
+    val isTon = selectedType == DomainAccountType.Ton
 
     LaunchedEffect(selectedType) {
         if (selectedType != null) {
@@ -179,6 +181,30 @@ fun CreateAccountScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
+            if (isTon) {
+                Text(
+                    "Wallet Version",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    for (version in listOf("V3R2", "V4R2")) {
+                        val isSelected = selectedTonWalletVersion == version
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { selectedTonWalletVersion = version },
+                            label = { Text(version) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             Button(
                 onClick = {
                     val type = selectedType ?: return@Button
@@ -186,8 +212,13 @@ fun CreateAccountScreen(
                     val displayName = ui?.displayName ?: "Wallet"
                     val tickerSymbol = ui?.tickerSymbol ?: type.type
                     val path = derivationPath.ifBlank { null }
+                    val params = if (type == DomainAccountType.Ton) {
+                        """{"walletVersion":"$selectedTonWalletVersion"}"""
+                    } else {
+                        null
+                    }
                     scope.launch {
-                        viewModel.createAccount(displayName, type, tickerSymbol, derivationPath = path)
+                        viewModel.createAccount(displayName, type, tickerSymbol, params, path)
                         navController.popBackStack()
                     }
                 },

@@ -14,7 +14,7 @@ import com.ultrabytecoder.kryptakeep.providers.ton.boc.*
 import com.ultrabytecoder.kryptakeep.providers.ton.types.StateInit
 import com.ultrabytecoder.kryptakeep.providers.ton.types.internalMessage
 import com.ultrabytecoder.kryptakeep.providers.ton.types.storeStateInit
-import com.ultrabytecoder.kryptakeep.providers.ton.wallet.WalletContractV3R2
+import com.ultrabytecoder.kryptakeep.providers.ton.wallet.WalletContract
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -40,7 +40,8 @@ class TonProvider(
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
         val keyPair = deriveTonKeyFromPath(account.derivationPath)
-        return tonAddressFromPublicKey(keyPair.publicKey)
+        val version = TonBase.parseWalletVersion(params)
+        return tonAddressFromPublicKey(keyPair.publicKey, version)
     }
 
     override suspend fun sync(accountId: String, syncMode: SyncMode) {
@@ -73,7 +74,8 @@ class TonProvider(
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
         val keyPair = deriveTonKeyFromPath(account.derivationPath)
-        val wallet = WalletContractV3R2.create(0, keyPair.publicKey)
+        val version = TonBase.parseWalletVersion(params)
+        val wallet: WalletContract = TonBase.walletContractFor(version, 0, keyPair.publicKey)
         val destAddress = TonAddress.parse(address)
 
         val client = createClient()
