@@ -97,7 +97,7 @@ fun CreateWalletScreen(
                     scope.launch {
                         when (val result = viewModel.createWallet(walletName.trim(), mnemonic.trim())) {
                             is CreateWalletViewModel.Result.Success -> {
-                                navController.navigate(Screen.AccountsList(result.walletId)) {
+                                navController.navigate(Screen.SetupPin) {
                                     popUpTo(0) { inclusive = true }
                                 }
                             }

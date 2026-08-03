@@ -21,6 +21,8 @@ import com.ultrabytecoder.kryptakeep.ui.screens.CreateAccountScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.CreateWalletScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.ExportMnemonicScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.ManageWalletsScreen
+import com.ultrabytecoder.kryptakeep.ui.screens.PinScreenEnter
+import com.ultrabytecoder.kryptakeep.ui.screens.PinScreenSetup
 import com.ultrabytecoder.kryptakeep.ui.screens.SendScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.TransactionSentScreen
 import com.ultrabytecoder.kryptakeep.ui.theme.KryptaKeepTheme
@@ -32,8 +34,12 @@ import com.ultrabytecoder.kryptakeep.ui.viewmodel.CreateWalletViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.ExportMnemonicViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.ManageWalletsViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SendViewModel
+import com.ultrabytecoder.kryptakeep.ui.viewmodel.SetupPinViewModel
+import com.ultrabytecoder.kryptakeep.ui.viewmodel.EnterPinViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupViewModel
+import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupState
 import org.koin.compose.koinInject
+import com.ultrabytecoder.kryptakeep.domain.usecase.CheckPinStatusUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.EstimateFeeUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.CreateWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetAccountsUseCase
@@ -46,6 +52,8 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.GetAccountAddressUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetMnemonicUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.DeleteWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.RenameWalletUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.SetupPinUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 
 @Composable
@@ -60,28 +68,36 @@ fun App() {
             composable<Screen.Startup> {
                 val getWallets: GetWalletsUseCase = koinInject()
                 val syncUseCase: SyncUseCase = koinInject()
-                val viewModel = remember { StartupViewModel(getWallets, syncUseCase) }
-                val wallets by viewModel.walletsFlow
-                    .collectAsStateWithLifecycle(initialValue = null)
+                val checkPinStatus: CheckPinStatusUseCase = koinInject()
+                val viewModel = remember { StartupViewModel(getWallets, syncUseCase, checkPinStatus) }
+                val currentState by viewModel.state.collectAsStateWithLifecycle()
 
-                if (wallets == null) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator()
+                when (currentState) {
+                    is StartupState.Loading -> {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator()
+                        }
                     }
-                } else {
-                    val loadedWallets = wallets!!
-                    LaunchedEffect(loadedWallets) {
-                        if (loadedWallets.isEmpty()) {
+                    is StartupState.NeedsWallet -> {
+                        LaunchedEffect(currentState) {
                             navController.navigate(Screen.CreateWallet) {
                                 popUpTo(Screen.Startup) { inclusive = true }
                             }
-                        } else {
-                            val walletId = loadedWallets.first().id
-                            viewModel.fullSync(walletId)
-                            navController.navigate(Screen.AccountsList(walletId)) {
+                        }
+                    }
+                    is StartupState.NeedsPinSetup -> {
+                        LaunchedEffect(currentState) {
+                            navController.navigate(Screen.SetupPin) {
+                                popUpTo(Screen.Startup) { inclusive = true }
+                            }
+                        }
+                    }
+                    is StartupState.NeedsPinUnlock -> {
+                        LaunchedEffect(currentState) {
+                            navController.navigate(Screen.EnterPin) {
                                 popUpTo(Screen.Startup) { inclusive = true }
                             }
                         }
@@ -155,6 +171,21 @@ fun App() {
                     ManageWalletsViewModel(getWallets, deleteWallet, renameWallet)
                 }
                 ManageWalletsScreen(navController, viewModel)
+            }
+            composable<Screen.SetupPin> {
+                val setupPin: SetupPinUseCase = koinInject()
+                val getWallets: GetWalletsUseCase = koinInject()
+                val syncUseCase: SyncUseCase = koinInject()
+                val viewModel = remember { SetupPinViewModel(setupPin, getWallets, syncUseCase) }
+                PinScreenSetup(navController, viewModel)
+            }
+            composable<Screen.EnterPin> {
+                val verifyPin: VerifyPinUseCase = koinInject()
+                val getWallets: GetWalletsUseCase = koinInject()
+                val syncUseCase: SyncUseCase = koinInject()
+                val checkPinStatus: CheckPinStatusUseCase = koinInject()
+                val viewModel = remember { EnterPinViewModel(verifyPin, getWallets, syncUseCase, checkPinStatus) }
+                PinScreenEnter(navController, viewModel)
             }
         }
     }

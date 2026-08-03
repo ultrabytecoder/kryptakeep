@@ -29,4 +29,10 @@ sealed interface Screen {
 
     @Serializable
     data object ManageWallets : Screen
+
+    @Serializable
+    data object SetupPin : Screen
+
+    @Serializable
+    data object EnterPin : Screen
 }

@@ -2,12 +2,15 @@ package com.ultrabytecoder.kryptakeep.di
 
 import com.ultrabytecoder.kryptakeep.data.DatabaseDriverFactory
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.data.PinRepositoryImpl
 import com.ultrabytecoder.kryptakeep.db.KryptaKeepDatabase
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
+import com.ultrabytecoder.kryptakeep.domain.repository.PinRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.WalletRepository
 import com.ultrabytecoder.kryptakeep.domain.service.KeyProvider
+import com.ultrabytecoder.kryptakeep.domain.usecase.CheckPinStatusUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.CreateAccountUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.CreateWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.EstimateFeeUseCase
@@ -18,9 +21,11 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.GetMnemonicUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.DeleteWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.RenameWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SendUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.SetupPinUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncAccountUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncManager
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
 import org.koin.dsl.module
 
 fun appModule(networkConfig: NetworkConfig) = module {
@@ -45,4 +50,9 @@ fun appModule(networkConfig: NetworkConfig) = module {
     single { SyncManager() }
     factory { SyncUseCase(get(), get(), get(), get(), get(), get()) }
     factory { SyncAccountUseCase(get(), get(), get(), get(), get(), get()) }
+
+    single<PinRepository> { PinRepositoryImpl(get(), get()) }
+    factory { CheckPinStatusUseCase(get()) }
+    factory { SetupPinUseCase(get()) }
+    factory { VerifyPinUseCase(get()) }
 }
