@@ -92,6 +92,9 @@ kotlin {
 
             implementation("dev.whyoleg.cryptography:cryptography-core:0.6.0")
             implementation("dev.whyoleg.cryptography:cryptography-provider-optimal:0.6.0")
+
+            // Cryptographically secure random bytes
+            implementation("org.kotlincrypto.random:crypto-rand:0.6.0")
         }
         iosMain.dependencies {
             implementation(libs.sqldelight.native.driver)

@@ -10,7 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import fr.acinq.bitcoin.MnemonicCode
-import kotlin.random.Random
+import org.kotlincrypto.random.CryptoRand
 import androidx.navigation.NavController
 import com.ultrabytecoder.kryptakeep.navigation.Screen
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CreateWalletViewModel
@@ -80,7 +80,7 @@ fun CreateWalletScreen(
 
             TextButton(
                 onClick = {
-                    val entropy = Random.Default.nextBytes(16)
+                    val entropy = CryptoRand.Default.nextBytes(ByteArray(32))
                     mnemonic = MnemonicCode.toMnemonics(entropy).joinToString(" ")
                     errorMessage = null
                 },
