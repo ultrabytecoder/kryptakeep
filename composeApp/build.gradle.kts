@@ -1,5 +1,4 @@
 import java.util.Properties
-import org.gradle.kotlin.dsl.implementation
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -49,6 +48,7 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
             implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.23.0")
             implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+            implementation("androidx.biometric:biometric:1.1.0")
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)

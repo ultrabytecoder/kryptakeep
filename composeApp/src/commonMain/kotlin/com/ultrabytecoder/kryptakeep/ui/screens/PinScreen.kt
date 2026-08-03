@@ -15,7 +15,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.Shield
 import compose.icons.feathericons.X
+import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.navigation.Screen
 import com.ultrabytecoder.kryptakeep.ui.components.Numpad
@@ -109,9 +111,11 @@ fun PinScreenSetup(
 @Composable
 fun PinScreenEnter(
     navController: NavController,
-    viewModel: EnterPinViewModel
+    viewModel: EnterPinViewModel,
+    biometricRepository: BiometricRepository
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val isBiometricEnabled by biometricRepository.isBiometricEnabled.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -180,6 +184,21 @@ fun PinScreenEnter(
                 )
 
                 Spacer(modifier = Modifier.height(32.dp))
+
+                // Biometric re-trigger button (only shown when biometric is enabled)
+                if (isBiometricEnabled) {
+                    IconButton(
+                        onClick = { viewModel.triggerBiometric() },
+                        enabled = !state.isLocked && !state.isProcessing
+                    ) {
+                        Icon(
+                            FeatherIcons.Shield,
+                            contentDescription = "Use biometric unlock",
+                            modifier = Modifier.size(32.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
 
                 PinDotsInline(
                     enteredLength = state.enteredPin.length,

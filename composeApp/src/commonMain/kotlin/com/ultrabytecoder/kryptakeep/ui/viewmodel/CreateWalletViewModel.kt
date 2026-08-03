@@ -11,8 +11,12 @@ class CreateWalletViewModel(
         data class Error(val message: String) : Result()
     }
 
-    suspend fun createWallet(name: String, mnemonic: String): Result = try {
-        val walletId = createWalletUseCase(name, mnemonic)
+    suspend fun createWallet(
+        name: String,
+        mnemonic: String,
+        passphrase: String = ""
+    ): Result = try {
+        val walletId = createWalletUseCase(name, mnemonic, passphrase)
         Result.Success(walletId)
     } catch (e: Exception) {
         Result.Error(e.message ?: "Invalid mnemonic")

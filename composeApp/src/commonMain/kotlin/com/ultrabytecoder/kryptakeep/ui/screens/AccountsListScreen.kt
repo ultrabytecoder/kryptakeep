@@ -134,6 +134,14 @@ fun AccountsListScreen(
                                 },
                                 leadingIcon = { Icon(FeatherIcons.Briefcase, contentDescription = null, modifier = Modifier.size(18.dp)) }
                             )
+                            DropdownMenuItem(
+                                text = { Text("Settings") },
+                                onClick = {
+                                    moreMenuExpanded = false
+                                    navController.navigate(Screen.Settings)
+                                },
+                                leadingIcon = { Icon(FeatherIcons.Settings, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
                         }
                     }
                     IconButton(onClick = { navController.navigate(Screen.CreateAccount(selectedWalletId)) }) {

@@ -8,9 +8,13 @@ class CreateWalletUseCase(
     private val walletRepository: WalletRepository,
     private val encryptionService: EncryptionService
 ) {
-    suspend operator fun invoke(name: String, mnemonic: String): Long {
+    suspend operator fun invoke(
+        name: String,
+        mnemonic: String,
+        passphrase: String = ""
+    ): Long {
         MnemonicCode.validate(mnemonic)
-        val seed = MnemonicCode.toSeed(mnemonic, "")
+        val seed = MnemonicCode.toSeed(mnemonic, passphrase)
         val encryptedSeed = encryptionService.encrypt(seed)
         val encryptedMnemonic = encryptionService.encrypt(mnemonic.encodeToByteArray())
         return walletRepository.insertWallet(name, encryptedSeed, encryptedMnemonic)

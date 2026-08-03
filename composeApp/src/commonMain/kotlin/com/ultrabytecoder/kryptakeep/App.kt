@@ -24,6 +24,7 @@ import com.ultrabytecoder.kryptakeep.ui.screens.ManageWalletsScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.PinScreenEnter
 import com.ultrabytecoder.kryptakeep.ui.screens.PinScreenSetup
 import com.ultrabytecoder.kryptakeep.ui.screens.SendScreen
+import com.ultrabytecoder.kryptakeep.ui.screens.SettingsScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.TransactionSentScreen
 import com.ultrabytecoder.kryptakeep.ui.theme.KryptaKeepTheme
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.AccountDetailsViewModel
@@ -36,6 +37,7 @@ import com.ultrabytecoder.kryptakeep.ui.viewmodel.ManageWalletsViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SendViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SetupPinViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.EnterPinViewModel
+import com.ultrabytecoder.kryptakeep.ui.viewmodel.SettingsViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupState
 import org.koin.compose.koinInject
@@ -54,7 +56,10 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.DeleteWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.RenameWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SetupPinUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
+import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
+import com.ultrabytecoder.kryptakeep.domain.service.BiometricService
+import com.ultrabytecoder.kryptakeep.domain.service.rememberBiometricService
 
 @Composable
 fun App() {
@@ -180,12 +185,23 @@ fun App() {
                 PinScreenSetup(navController, viewModel)
             }
             composable<Screen.EnterPin> {
+                val biometricService = rememberBiometricService()
+                val biometricRepository: BiometricRepository = koinInject()
+
                 val verifyPin: VerifyPinUseCase = koinInject()
                 val getWallets: GetWalletsUseCase = koinInject()
                 val syncUseCase: SyncUseCase = koinInject()
                 val checkPinStatus: CheckPinStatusUseCase = koinInject()
-                val viewModel = remember { EnterPinViewModel(verifyPin, getWallets, syncUseCase, checkPinStatus) }
-                PinScreenEnter(navController, viewModel)
+                val viewModel = remember { EnterPinViewModel(verifyPin, getWallets, syncUseCase, checkPinStatus, biometricRepository, biometricService) }
+                PinScreenEnter(navController, viewModel, biometricRepository)
+            }
+            composable<Screen.Settings> {
+                val biometricService = rememberBiometricService()
+                val biometricRepository: BiometricRepository = koinInject()
+
+                val verifyPin: VerifyPinUseCase = koinInject()
+                val viewModel = remember { SettingsViewModel(verifyPin, biometricRepository, biometricService) }
+                SettingsScreen(navController, viewModel)
             }
         }
     }

@@ -35,4 +35,7 @@ sealed interface Screen {
 
     @Serializable
     data object EnterPin : Screen
+
+    @Serializable
+    data object Settings : Screen
 }

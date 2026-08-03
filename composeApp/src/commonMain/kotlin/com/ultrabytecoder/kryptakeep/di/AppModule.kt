@@ -1,10 +1,13 @@
 package com.ultrabytecoder.kryptakeep.di
 
+import com.ultrabytecoder.kryptakeep.data.BiometricRepositoryImpl
 import com.ultrabytecoder.kryptakeep.data.DatabaseDriverFactory
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.data.PinRepositoryImpl
+import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.db.KryptaKeepDatabase
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
+import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.PinRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
@@ -55,4 +58,6 @@ fun appModule(networkConfig: NetworkConfig) = module {
     factory { CheckPinStatusUseCase(get()) }
     factory { SetupPinUseCase(get()) }
     factory { VerifyPinUseCase(get()) }
+
+    single<BiometricRepository> { BiometricRepositoryImpl(get<SettingsStorage>()) }
 }

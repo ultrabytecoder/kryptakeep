@@ -8,10 +8,14 @@ import com.ultrabytecoder.kryptakeep.domain.repository.VerifyResult
 import com.ultrabytecoder.kryptakeep.domain.usecase.CheckPinStatusUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetWalletsUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncUseCase
+import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
+import com.ultrabytecoder.kryptakeep.domain.service.BiometricService
 import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
 import com.ultrabytecoder.kryptakeep.providers.SyncMode
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class EnterPinState(
     val enteredPin: String = "",
@@ -32,7 +36,9 @@ class EnterPinViewModel(
     private val verifyPinUseCase: VerifyPinUseCase,
     private val getWalletsUseCase: GetWalletsUseCase,
     private val syncUseCase: SyncUseCase,
-    checkPinStatus: CheckPinStatusUseCase
+    checkPinStatus: CheckPinStatusUseCase,
+    private val biometricRepository: BiometricRepository,
+    private val biometricService: BiometricService
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(EnterPinState())
@@ -44,6 +50,8 @@ class EnterPinViewModel(
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
     )
     val events: Flow<EnterPinEvent> = _events
+
+    private val biometricMutex = Mutex()
 
     init {
         // Observe repository pin state changes — recompute lock from lockedUntil each time
@@ -95,6 +103,40 @@ class EnterPinViewModel(
                         )
                     } else {
                         s
+                    }
+                }
+            }
+        }
+
+        // Auto-trigger biometric unlock if enabled — only after PIN state is loaded and not locked
+        viewModelScope.launch {
+            biometricMutex.withLock {
+                val firstState = checkPinStatus().first()
+                if (firstState is PinState.Setup && !firstState.isLocked && biometricRepository.isBiometricEnabled.value) {
+                    val token = biometricRepository.authenticate(biometricService)
+                    if (token != null) {
+                        val walletId = getWalletsUseCase().first().firstOrNull()?.id
+                        if (walletId != null) {
+                            syncUseCase(viewModelScope, walletId, SyncMode.FULL)
+                            _events.emit(EnterPinEvent.NavigateToAccountsList(walletId))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun triggerBiometric() {
+        viewModelScope.launch {
+            if (_state.value.isLocked) return@launch
+            if (!biometricRepository.isBiometricEnabled.value) return@launch
+            biometricMutex.withLock {
+                val token = biometricRepository.authenticate(biometricService)
+                if (token != null) {
+                    val walletId = getWalletsUseCase().first().firstOrNull()?.id
+                    if (walletId != null) {
+                        syncUseCase(viewModelScope, walletId, SyncMode.FULL)
+                        _events.emit(EnterPinEvent.NavigateToAccountsList(walletId))
                     }
                 }
             }
