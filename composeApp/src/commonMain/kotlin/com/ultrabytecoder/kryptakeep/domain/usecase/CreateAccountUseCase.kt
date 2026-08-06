@@ -12,6 +12,9 @@ class CreateAccountUseCase(
     private val accountRepository: AccountRepository,
     private val networkConfig: NetworkConfig
 ) {
+    /**
+     * Creates a new native account and returns its ID.
+     */
     @OptIn(ExperimentalUuidApi::class)
     suspend operator fun invoke(
         walletId: Long,
@@ -20,7 +23,9 @@ class CreateAccountUseCase(
         symbol: String,
         params: String? = null,
         derivationPath: String? = null
-    ) {
+    ): String {
+        require(type.isNative) { "Use AddTokenUseCase for tokens" }
+
         val maxIndex = accountRepository.getMaxAccountIndexByWalletAndAccountType(walletId, type.toDbCode())
         val accountIndex = (maxIndex ?: -1) + 1
         val accountNameIndex = accountIndex + 1
@@ -28,7 +33,7 @@ class CreateAccountUseCase(
         val resolvedPath = derivationPath
             ?: DerivationPathResolver.defaultPath(type, accountIndex, networkConfig)
 
-        require(DerivationPathResolver.isValidPath(resolvedPath, type)) {
+        require(DerivationPathResolver.isValidPath(resolvedPath, type, networkConfig)) {
             "Invalid derivation path for $type: $resolvedPath"
         }
 
@@ -36,8 +41,9 @@ class CreateAccountUseCase(
             "An account with derivation path $resolvedPath already exists"
         }
 
+        val id = Uuid.random().toString()
         val account = AccountInfo(
-            id = Uuid.random().toString(),
+            id = id,
             walletId = walletId,
             name = "$displayName account $accountNameIndex",
             amount = "0",
@@ -46,8 +52,10 @@ class CreateAccountUseCase(
             address = null,
             accountIndex = accountIndex,
             derivationPath = resolvedPath,
-            params = params
+            params = params,
+            parentAccountId = null
         )
         accountRepository.insertAccount(account)
+        return id
     }
 }

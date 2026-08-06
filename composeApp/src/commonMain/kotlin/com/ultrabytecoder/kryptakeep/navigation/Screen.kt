@@ -13,7 +13,7 @@ sealed interface Screen {
     data class AccountsList(val walletId: Long) : Screen
 
     @Serializable
-    data class AccountDetails(val accountId: String) : Screen
+    data class AccountDetails(val accountId: String, val preselectedTokenId: String? = null) : Screen
 
     @Serializable
     data class Send(val accountId: String) : Screen
@@ -23,6 +23,14 @@ sealed interface Screen {
 
     @Serializable
     data class CreateAccount(val walletId: Long) : Screen
+
+    @Serializable
+    data class AddToken(
+        val walletId: Long,
+        val preselectedTokenAddress: String? = null,
+        val preselectedTokenType: String? = null,
+        val requireManualSelection: Boolean = false
+    ) : Screen
 
     @Serializable
     data class ExportMnemonic(val walletId: Long) : Screen
@@ -38,4 +46,7 @@ sealed interface Screen {
 
     @Serializable
     data object Settings : Screen
+
+    @Serializable
+    data object CustomNodes : Screen
 }

@@ -50,7 +50,6 @@ class Erc20TokenProvider(
     }
 
     override suspend fun balance(accountId: String): BigDecimal {
-        val account = accountRepository.getAccount(accountId) ?: return BigDecimal.ZERO
         val address = getAddress(accountId)
         val paddedAddress = address.removePrefix("0x").lowercase().padStart(64, '0')
         val data = "0x70a08231$paddedAddress"

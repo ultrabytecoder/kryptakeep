@@ -18,6 +18,7 @@ import com.ultrabytecoder.kryptakeep.navigation.Screen
 import com.ultrabytecoder.kryptakeep.ui.screens.AccountDetailsScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.AccountsListScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.CreateAccountScreen
+import com.ultrabytecoder.kryptakeep.ui.screens.AddTokenScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.CreateWalletScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.ExportMnemonicScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.ManageWalletsScreen
@@ -25,12 +26,14 @@ import com.ultrabytecoder.kryptakeep.ui.screens.PinScreenEnter
 import com.ultrabytecoder.kryptakeep.ui.screens.PinScreenSetup
 import com.ultrabytecoder.kryptakeep.ui.screens.SendScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.SettingsScreen
+import com.ultrabytecoder.kryptakeep.ui.screens.CustomNodesScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.TransactionSentScreen
 import com.ultrabytecoder.kryptakeep.ui.theme.KryptaKeepTheme
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.AccountDetailsViewModel
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncManager
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.AccountsListViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CreateAccountViewModel
+import com.ultrabytecoder.kryptakeep.ui.viewmodel.AddTokenViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CreateWalletViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.ExportMnemonicViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.ManageWalletsViewModel
@@ -38,9 +41,11 @@ import com.ultrabytecoder.kryptakeep.ui.viewmodel.SendViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SetupPinViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.EnterPinViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SettingsViewModel
+import com.ultrabytecoder.kryptakeep.ui.viewmodel.CustomNodesViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupState
 import org.koin.compose.koinInject
+import org.koin.core.qualifier.named
 import com.ultrabytecoder.kryptakeep.domain.usecase.CheckPinStatusUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.EstimateFeeUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.CreateWalletUseCase
@@ -50,6 +55,8 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.SendUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncAccountUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.CreateAccountUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.AddTokenUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.CreateTokenUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetAccountAddressUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetMnemonicUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.DeleteWalletUseCase
@@ -129,9 +136,10 @@ fun App() {
                 val route = backStackEntry.toRoute<Screen.AccountDetails>()
                 val getAccounts: GetAccountsUseCase = koinInject()
                 val getAccountAddress: GetAccountAddressUseCase = koinInject()
+                val accountRepository: com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository = koinInject()
                 val transactionRepository: TransactionRepository = koinInject()
-                val viewModel = remember(route.accountId) {
-                    AccountDetailsViewModel(route.accountId, getAccounts, getAccountAddress, transactionRepository)
+                val viewModel = remember(route.accountId, route.preselectedTokenId) {
+                    AccountDetailsViewModel(route.accountId, route.preselectedTokenId, getAccounts, getAccountAddress, accountRepository, transactionRepository)
                 }
                 AccountDetailsScreen(navController, viewModel)
             }
@@ -153,12 +161,29 @@ fun App() {
             composable<Screen.CreateAccount> { backStackEntry ->
                 val route = backStackEntry.toRoute<Screen.CreateAccount>()
                 val createAccount: CreateAccountUseCase = koinInject()
+                val createToken: CreateTokenUseCase = koinInject()
                 val accountRepository: com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository = koinInject()
                 val networkConfig: com.ultrabytecoder.kryptakeep.data.NetworkConfig = koinInject()
                 val viewModel = remember(route.walletId) {
-                    CreateAccountViewModel(route.walletId, createAccount, accountRepository, networkConfig)
+                    CreateAccountViewModel(route.walletId, createAccount, createToken, accountRepository, networkConfig)
                 }
                 CreateAccountScreen(navController, viewModel)
+            }
+            composable<Screen.AddToken> { backStackEntry ->
+                val route = backStackEntry.toRoute<Screen.AddToken>()
+                val addToken: AddTokenUseCase = koinInject()
+                val accountRepository: com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository = koinInject()
+                val networkConfig: com.ultrabytecoder.kryptakeep.data.NetworkConfig = koinInject()
+                val viewModel = remember(route.walletId) {
+                    AddTokenViewModel(route.walletId, addToken, accountRepository, networkConfig)
+                }
+                AddTokenScreen(
+                    navController = navController,
+                    viewModel = viewModel,
+                    preselectedTokenAddress = route.preselectedTokenAddress,
+                    preselectedTokenType = route.preselectedTokenType,
+                    requireManualSelection = route.requireManualSelection
+                )
             }
             composable<Screen.ExportMnemonic> { backStackEntry ->
                 val route = backStackEntry.toRoute<Screen.ExportMnemonic>()
@@ -202,6 +227,12 @@ fun App() {
                 val verifyPin: VerifyPinUseCase = koinInject()
                 val viewModel = remember { SettingsViewModel(verifyPin, biometricRepository, biometricService) }
                 SettingsScreen(navController, viewModel)
+            }
+            composable<Screen.CustomNodes> {
+                val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
+                val networkConfig: com.ultrabytecoder.kryptakeep.data.NetworkConfig = koinInject(named("raw"))
+                val viewModel = remember { CustomNodesViewModel(settingsStorage, networkConfig) }
+                CustomNodesScreen(navController, viewModel)
             }
         }
     }

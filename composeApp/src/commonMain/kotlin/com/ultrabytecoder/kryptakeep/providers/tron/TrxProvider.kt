@@ -25,12 +25,17 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 
 class TrxProvider(
     masterKey: DeterministicWallet.ExtendedPrivateKey,
@@ -121,12 +126,22 @@ class TrxProvider(
 
             check(!createJson.containsKey("Error")) { "Error creating transaction: ${createJson["Error"]}" }
 
-            val txidHex = createJson["txID"]!!.jsonPrimitive.content
-            val rawData = createJson["raw_data"]!!.jsonObject.toString()
-            val rawDataHex = createJson["raw_data_hex"]!!.jsonPrimitive.content
+            val txidHex = createJson["txID"]?.jsonPrimitive?.content
+                ?: throw IllegalStateException("TRON RPC missing txID in create response")
+            val rawDataObj = createJson["raw_data"]?.jsonObject
+                ?: throw IllegalStateException("TRON RPC missing raw_data in create response")
+            val rawDataHex = createJson["raw_data_hex"]?.jsonPrimitive?.content
+                ?: throw IllegalStateException("TRON RPC missing raw_data_hex in create response")
             val signatureHex = signTronTransaction(Hex.decode(txidHex), fromKey)
 
-            return """{"txid":"$txidHex","raw_data":$rawData,"raw_data_hex":"$rawDataHex","signature":["$signatureHex"],"visible":true}"""
+            val responseJson = buildJsonObject {
+                put("txid", txidHex)
+                put("raw_data", rawDataObj as JsonElement)
+                put("raw_data_hex", rawDataHex)
+                putJsonArray("signature") { add(JsonPrimitive(signatureHex)) }
+                put("visible", true)
+            }
+            return responseJson.toString()
         } finally {
             client.close()
         }

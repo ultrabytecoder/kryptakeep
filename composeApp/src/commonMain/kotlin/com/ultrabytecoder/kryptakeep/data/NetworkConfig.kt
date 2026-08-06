@@ -3,6 +3,24 @@ package com.ultrabytecoder.kryptakeep.data
 import fr.acinq.bitcoin.Block
 import fr.acinq.bitcoin.BlockHash
 
+/**
+ * Returns a copy of this [NetworkConfig] with any per-chain custom node URLs
+ * stored in [storage] applied. Chains without a saved custom value keep their
+ * default URL.
+ */
+fun NetworkConfig.applyCustomNodes(storage: SettingsStorage): NetworkConfig {
+    val btc = storage.getString(CustomNodeKeys.BTC)
+    val eth = storage.getString(CustomNodeKeys.ETH)
+    val trx = storage.getString(CustomNodeKeys.TRX)
+    val ton = storage.getString(CustomNodeKeys.TON)
+    return copy(
+        btcMempoolApiBase = btc ?: btcMempoolApiBase,
+        ethRpcUrl = eth ?: ethRpcUrl,
+        tronApiBase = trx ?: tronApiBase,
+        tonApiBase = ton ?: tonApiBase
+    )
+}
+
 data class NetworkConfig(
     val ethRpcUrl: String,
     val ethChainId: Long,

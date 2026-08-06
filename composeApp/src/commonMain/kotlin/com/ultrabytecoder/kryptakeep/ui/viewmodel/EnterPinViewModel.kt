@@ -63,7 +63,7 @@ class EnterPinViewModel(
                             _events.tryEmit(EnterPinEvent.NavigateToRecovery)
                         } else {
                             val remaining = if (pinState.isLocked) {
-                                ((pinState.lockedUntil - System.currentTimeMillis()) / 1000)
+                                ((pinState.lockedUntil - kotlin.time.Clock.System.now().toEpochMilliseconds()) / 1000)
                                     .coerceAtLeast(0).toInt()
                             } else {
                                 0
@@ -95,7 +95,7 @@ class EnterPinViewModel(
                 kotlinx.coroutines.delay(1000)
                 _state.update { s ->
                     if (s.isLocked && s.lockedUntil > 0L) {
-                        val newRemaining = ((s.lockedUntil - System.currentTimeMillis()) / 1000)
+                        val newRemaining = ((s.lockedUntil - kotlin.time.Clock.System.now().toEpochMilliseconds()) / 1000)
                             .coerceAtLeast(0).toInt()
                         s.copy(
                             lockSecondsRemaining = newRemaining,
@@ -172,6 +172,7 @@ class EnterPinViewModel(
                     is VerifyResult.Success -> {
                         val walletId = getWalletsUseCase().first().firstOrNull()?.id
                         if (walletId != null) {
+                            _state.update { it.copy(isProcessing = false) }
                             syncUseCase(viewModelScope, walletId, SyncMode.FULL)
                             _events.emit(EnterPinEvent.NavigateToAccountsList(walletId))
                         } else {
@@ -194,7 +195,7 @@ class EnterPinViewModel(
                         }
                     }
                     is VerifyResult.Locked -> {
-                        val remaining = ((result.lockedUntil - System.currentTimeMillis()) / 1000)
+                        val remaining = ((result.lockedUntil - kotlin.time.Clock.System.now().toEpochMilliseconds()) / 1000)
                             .coerceAtLeast(0).toInt()
                         _state.update {
                             it.copy(

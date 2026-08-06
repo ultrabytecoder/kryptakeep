@@ -5,16 +5,19 @@ import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.domain.model.AccountType
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.usecase.CreateAccountUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.CreateTokenUseCase
 import com.ultrabytecoder.kryptakeep.providers.DerivationPathResolver
 
 class CreateAccountViewModel(
-    private val walletId: Long,
-    private val createAccount: CreateAccountUseCase,
+    val walletId: Long,
+    private val createAccountUseCase: CreateAccountUseCase,
+    private val createTokenUseCase: CreateTokenUseCase,
     private val accountRepository: AccountRepository,
     private val networkConfig: NetworkConfig
 ) : ViewModel() {
 
     suspend fun getDefaultDerivationPath(type: AccountType): String {
+        require(type.isNative) { "Tokens do not have derivation paths" }
         val maxIndex = accountRepository.getMaxAccountIndexByWalletAndAccountType(walletId, type.toDbCode())
         val nextIndex = (maxIndex ?: -1) + 1
         return DerivationPathResolver.defaultPath(type, nextIndex, networkConfig)
@@ -26,5 +29,10 @@ class CreateAccountViewModel(
         symbol: String,
         params: String? = null,
         derivationPath: String? = null
-    ) = createAccount(walletId, displayName, type, symbol, params, derivationPath)
+    ) = createAccountUseCase(walletId, displayName, type, symbol, params, derivationPath)
+
+    suspend fun createToken(
+        tokenType: AccountType,
+        symbol: String
+    ): CreateTokenUseCase.Result = createTokenUseCase(walletId, tokenType, symbol)
 }

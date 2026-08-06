@@ -109,30 +109,6 @@ class BtcProvider(
         }
     }
 
-    private fun deriveReceiveKey(accountDerivationIndex: Long, addressIndex: Long): DeterministicWallet.ExtendedPrivateKey {
-        return masterKey.derivePrivateKey(
-            listOf(
-                DeterministicWallet.hardened(84),
-                DeterministicWallet.hardened(networkConfig.btcBip84CoinType),
-                DeterministicWallet.hardened(accountDerivationIndex),
-                0L,
-                addressIndex
-            )
-        )
-    }
-
-    private fun deriveChangeKey(accountDerivationIndex: Long, addressIndex: Long): DeterministicWallet.ExtendedPrivateKey {
-        return masterKey.derivePrivateKey(
-            listOf(
-                DeterministicWallet.hardened(84),
-                DeterministicWallet.hardened(networkConfig.btcBip84CoinType),
-                DeterministicWallet.hardened(accountDerivationIndex),
-                1L,
-                addressIndex
-            )
-        )
-    }
-
     private fun deriveReceiveKeyFromPath(accountPath: String, addressIndex: Long): DeterministicWallet.ExtendedPrivateKey {
         val segments = DerivationPathResolver.parsePath(accountPath).map { (index, hardened) ->
             if (hardened) DeterministicWallet.hardened(index) else index
@@ -155,23 +131,16 @@ class BtcProvider(
         return Bitcoin.computeBIP84Address(key.publicKey, networkConfig.btcGenesisBlockHash)
     }
 
-    private fun ourAddress(index: Long): String {
-        val addressIndex = params["current_receive_key_id"]?.jsonPrimitive?.long ?: 0L
-        val derivedKey = deriveReceiveKey(index, addressIndex)
-        return Bitcoin.computeBIP84Address(derivedKey.publicKey, networkConfig.btcGenesisBlockHash)
-    }
-
     private fun resolveDeriveFunctions(account: AccountInfo): Pair<(Long) -> DeterministicWallet.ExtendedPrivateKey, (Long) -> DeterministicWallet.ExtendedPrivateKey> {
-        val path = account.derivationPath
-        val receiveDeriver: (Long) -> DeterministicWallet.ExtendedPrivateKey = { addrIdx -> deriveReceiveKeyFromPath(path, addrIdx) }
-        val changeDeriver: (Long) -> DeterministicWallet.ExtendedPrivateKey = { addrIdx -> deriveChangeKeyFromPath(path, addrIdx) }
+        val receiveDeriver: (Long) -> DeterministicWallet.ExtendedPrivateKey = { addrIdx -> deriveReceiveKeyFromPath(account.derivationPath, addrIdx) }
+        val changeDeriver: (Long) -> DeterministicWallet.ExtendedPrivateKey = { addrIdx -> deriveChangeKeyFromPath(account.derivationPath, addrIdx) }
         return receiveDeriver to changeDeriver
     }
 
     override suspend fun sync(accountId: String, syncMode: SyncMode) {
         println("BtcProvider.sync() started: accountId=$accountId, syncMode=$syncMode")
         val account = accountRepository.getAccount(accountId) ?: return
-        val derivationIndex = account.accountIndex
+        val derivationIndex = account.accountIndex!!
         val (receiveDeriver, changeDeriver) = resolveDeriveFunctions(account)
 
         val receiveStartIndex = when (syncMode) {
@@ -247,7 +216,7 @@ class BtcProvider(
         client: HttpClient,
         chain: Int,
         startIndex: Long,
-        deriveKey: (Long) -> DeterministicWallet.ExtendedPrivateKey = { deriveReceiveKey(0L, it) }
+        deriveKey: (Long) -> DeterministicWallet.ExtendedPrivateKey
     ): List<Pair<JsonObject, String>> {
         val results = mutableListOf<Pair<JsonObject, String>>()
         var consecutiveEmpty = 0
@@ -392,7 +361,7 @@ class BtcProvider(
         chain: Int,
         derivationIndex: Long,
         startIndex: Long,
-        deriveKey: (Long) -> DeterministicWallet.ExtendedPrivateKey = { deriveReceiveKey(derivationIndex, it) }
+        deriveKey: (Long) -> DeterministicWallet.ExtendedPrivateKey
     ): Long? {
         val existingUtxos = utxoRepository.getUtxosByAccount(accountId)
         val existingTxids = existingUtxos.map { "${it.txid}:${it.vout}" }.toSet()
@@ -441,12 +410,12 @@ class BtcProvider(
             }
             val body = response.body<String>()
             val jsonArray = Json.parseToJsonElement(body).jsonArray
-            jsonArray.map { elem ->
-                Utxo(
-                    txid = elem.jsonObject["txid"]!!.jsonPrimitive.content,
-                    vout = elem.jsonObject["vout"]!!.jsonPrimitive.long,
-                    value = elem.jsonObject["value"]!!.jsonPrimitive.long
-                )
+            jsonArray.mapNotNull { elem ->
+                val obj = elem.jsonObject
+                val txid = obj["txid"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                val vout = obj["vout"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null
+                val value = obj["value"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null
+                Utxo(txid, vout, value)
             }
         } catch (e: Exception) {
             println("fetchUtxos: failed for $address — ${e.message}")
@@ -597,19 +566,12 @@ class BtcProvider(
     }
 
     private fun deriveKeyFromPath(path: String): DeterministicWallet.ExtendedPrivateKey {
-        val parts = path.removePrefix("m/").split("/")
-        val account = parts[2].removeSuffix("'").toLong()
-        val chain = parts[3].toLong()
-        val index = parts[4].toLong()
-        return masterKey.derivePrivateKey(
-            listOf(
-                DeterministicWallet.hardened(84),
-                DeterministicWallet.hardened(networkConfig.btcBip84CoinType),
-                DeterministicWallet.hardened(account),
-                chain,
-                index
-            )
-        )
+        val parsed = DerivationPathResolver.parsePath(path)
+        require(parsed.size == 5 && parsed[0].first == 84L && parsed[0].second) { "Invalid BIP84 path: $path" }
+        val segments = parsed.map { (idx, hardened) ->
+            if (hardened) DeterministicWallet.hardened(idx) else idx
+        }
+        return masterKey.derivePrivateKey(segments)
     }
 }
 

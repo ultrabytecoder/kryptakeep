@@ -54,6 +54,8 @@ object ProviderFactory {
                 networkConfig,
                 transactionRepository = transactionRepository
             )
+            // TODO: implement TonTokenProvider when Jetton support is added
+            is AccountType.TonToken -> TonProvider(masterSeed, accountRepository, parsedParams, networkConfig, transactionRepository = transactionRepository)
         }
     }
 }

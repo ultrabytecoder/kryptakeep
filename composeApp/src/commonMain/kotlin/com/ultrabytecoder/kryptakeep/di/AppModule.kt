@@ -5,6 +5,7 @@ import com.ultrabytecoder.kryptakeep.data.DatabaseDriverFactory
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.data.PinRepositoryImpl
 import com.ultrabytecoder.kryptakeep.data.SettingsStorage
+import com.ultrabytecoder.kryptakeep.data.applyCustomNodes
 import com.ultrabytecoder.kryptakeep.db.KryptaKeepDatabase
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
@@ -13,8 +14,10 @@ import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.WalletRepository
 import com.ultrabytecoder.kryptakeep.domain.service.KeyProvider
+import com.ultrabytecoder.kryptakeep.domain.usecase.AddTokenUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.CheckPinStatusUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.CreateAccountUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.CreateTokenUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.CreateWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.EstimateFeeUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetAccountAddressUseCase
@@ -29,10 +32,12 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.SyncAccountUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncManager
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
 fun appModule(networkConfig: NetworkConfig) = module {
-    single { networkConfig }
+    single<NetworkConfig>(named("raw")) { networkConfig }
+    single<NetworkConfig> { get<NetworkConfig>(named("raw")).applyCustomNodes(get()) }
     single { KryptaKeepDatabase(get<DatabaseDriverFactory>().createDriver()) }
     single<AccountRepository> { com.ultrabytecoder.kryptakeep.data.AccountRepository(get()) }
     single<UtxoRepository> { com.ultrabytecoder.kryptakeep.data.UtxoRepository(get()) }
@@ -44,6 +49,8 @@ fun appModule(networkConfig: NetworkConfig) = module {
     factory { GetMnemonicUseCase(get(), get()) }
     factory { GetAccountsUseCase(get()) }
     factory { CreateAccountUseCase(get(), get()) }
+    factory { AddTokenUseCase(get()) }
+    factory { CreateTokenUseCase(get(), get(), get()) }
     factory { EstimateFeeUseCase(get(), get(), get(), get(), get()) }
     factory { SendUseCase(get(), get(), get(), get(), get()) }
     factory { GetAccountAddressUseCase(get(), get(), get(), get(), get()) }

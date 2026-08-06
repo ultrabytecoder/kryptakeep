@@ -17,12 +17,17 @@ import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.statement.HttpResponse
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 
 class Trc20TokenProvider(
     masterKey: DeterministicWallet.ExtendedPrivateKey,
@@ -63,8 +68,8 @@ class Trc20TokenProvider(
                 client, contractAddress,
                 "balanceOf(address)", addressHex, address
             )
-            val rawBalanceHex = resultJson["constant_result"]!!
-                .jsonArray[0].jsonPrimitive.content
+            val rawBalanceHex = resultJson["constant_result"]?.jsonArray?.get(0)?.jsonPrimitive?.content
+                ?: throw IllegalStateException("TRON RPC missing constant_result in balanceOf response")
             val rawBalance = rawBalanceHex.toLong(16)
             val decimals = fetchDecimalsWithClient(client, accountId)
             return BigDecimal.Companion.fromLong(rawBalance)
@@ -100,13 +105,24 @@ class Trc20TokenProvider(
 
             check(!triggerJson.containsKey("Error")) { "Error triggering smart contract: ${triggerJson["Error"]}" }
 
-            val transaction = triggerJson["transaction"]!!.jsonObject
-            val txidHex = transaction["txID"]!!.jsonPrimitive.content
-            val rawData = transaction["raw_data"]!!.jsonObject.toString()
-            val rawDataHex = transaction["raw_data_hex"]!!.jsonPrimitive.content
+            val transaction = triggerJson["transaction"]?.jsonObject
+                ?: throw IllegalStateException("TRON RPC missing transaction in trigger response")
+            val txidHex = transaction["txID"]?.jsonPrimitive?.content
+                ?: throw IllegalStateException("TRON RPC missing txID in trigger response")
+            val rawDataObj = transaction["raw_data"]?.jsonObject
+                ?: throw IllegalStateException("TRON RPC missing raw_data in trigger response")
+            val rawDataHex = transaction["raw_data_hex"]?.jsonPrimitive?.content
+                ?: throw IllegalStateException("TRON RPC missing raw_data_hex in trigger response")
             val signatureHex = signTronTransaction(Hex.decode(txidHex), fromKey)
 
-            return """{"txid":"$txidHex","raw_data":$rawData,"raw_data_hex":"$rawDataHex","signature":["$signatureHex"],"visible":true}"""
+            val responseJson = buildJsonObject {
+                put("txid", txidHex)
+                put("raw_data", rawDataObj as JsonElement)
+                put("raw_data_hex", rawDataHex)
+                putJsonArray("signature") { add(JsonPrimitive(signatureHex)) }
+                put("visible", true)
+            }
+            return responseJson.toString()
         } finally {
             client.close()
         }
@@ -220,8 +236,8 @@ class Trc20TokenProvider(
             client, contractAddress,
             "decimals()", "", ownerAddress
         )
-        val resultHex = resultJson["constant_result"]!!
-            .jsonArray[0].jsonPrimitive.content
+        val resultHex = resultJson["constant_result"]?.jsonArray?.get(0)?.jsonPrimitive?.content
+            ?: throw IllegalStateException("TRON RPC missing constant_result in decimals response")
         return resultHex.toLong(16).toInt()
     }
 }

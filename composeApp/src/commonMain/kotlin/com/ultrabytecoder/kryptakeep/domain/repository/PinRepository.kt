@@ -10,7 +10,7 @@ sealed interface PinState {
         val lockedUntil: Long,
         val isCorrupted: Boolean = false
     ) : PinState {
-        val isLocked: Boolean get() = System.currentTimeMillis() < lockedUntil
+        val isLocked: Boolean get() = kotlin.time.Clock.System.now().toEpochMilliseconds() < lockedUntil
     }
 }
 

@@ -1,54 +1,30 @@
 package com.ultrabytecoder.kryptakeep.ui.screens
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.Canvas
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import compose.icons.FeatherIcons
-import compose.icons.feathericons.Copy
-import compose.icons.feathericons.Check
-import io.github.goquati.qr.QrCode
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.Check
+import compose.icons.feathericons.Copy
+import io.github.goquati.qr.QrCode
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
 import com.ultrabytecoder.kryptakeep.domain.model.AccountType
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
@@ -68,6 +44,7 @@ fun AccountDetailsScreen(
     val isLoadingMore by viewModel.isLoadingMore.collectAsStateWithLifecycle()
     val hasMore by viewModel.hasMore.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -88,9 +65,15 @@ fun AccountDetailsScreen(
                 .padding(paddingValues)
                 .padding(horizontal = 16.dp)
         ) {
-            // Balance section
+            // Balance section with chips
             account?.let { acc ->
-                BalanceCard(acc)
+                val allAssets = listOf(acc) + uiState.tokens
+                val selected = uiState.selectedAccount ?: acc
+                BalanceSection(
+                    assets = allAssets,
+                    selectedAccount = selected,
+                    onSelect = { viewModel.selectAccount(it) }
+                )
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -128,14 +111,15 @@ fun AccountDetailsScreen(
             }
 
             // Send button
-            account?.let { acc ->
+            val selected = uiState.selectedAccount ?: account
+            selected?.let { acc ->
                 Button(
                     onClick = {
                         navController.navigate(Screen.Send(acc.id))
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Send")
+                    Text("Send ${acc.symbol}")
                 }
             }
 
@@ -150,8 +134,7 @@ fun AccountDetailsScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Transaction LazyColumn with pagination
-            account?.let { acc ->
+            selected?.let { acc ->
                 TransactionListSection(
                     transactions = transactions,
                     accountType = acc.type,
@@ -166,7 +149,11 @@ fun AccountDetailsScreen(
 }
 
 @Composable
-private fun BalanceCard(account: AccountInfo) {
+private fun BalanceSection(
+    assets: List<AccountInfo>,
+    selectedAccount: AccountInfo,
+    onSelect: (AccountInfo) -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -176,20 +163,42 @@ private fun BalanceCard(account: AccountInfo) {
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
+            // Asset chips
+            if (assets.size > 1) {
+                Text(
+                    text = "Select Asset",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(assets, key = { it.id }) { asset ->
+                        val isSelected = asset.id == selectedAccount.id
+                        AssetChip(
+                            account = asset,
+                            isSelected = isSelected,
+                            onClick = { onSelect(asset) }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            // Selected balance
             Text(
-                text = account.name,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "${account.amount} ${account.symbol}",
+                text = "${selectedAccount.amount} ${selectedAccount.symbol}",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
+
             Spacer(modifier = Modifier.height(4.dp))
+
             Text(
-                text = account.derivationPath,
+                text = selectedAccount.derivationPath,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -198,9 +207,60 @@ private fun BalanceCard(account: AccountInfo) {
 }
 
 @Composable
+private fun AssetChip(
+    account: AccountInfo,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val chipColor = account.type.chipColor()
+
+    Card(
+        modifier = Modifier
+            .height(40.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) chipColor else MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 2.dp else 0.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .wrapContentWidth()
+                .padding(horizontal = 16.dp)
+                .clickable { onClick() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = account.symbol,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Medium,
+                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
+}
+
+private fun AccountType.chipColor(): Color = when (this) {
+    is AccountType.Btc -> Color(0xFFF7931A)
+    is AccountType.Eth -> Color(0xFF627EEA)
+    is AccountType.Trx -> Color(0xFFFF0013)
+    is AccountType.Ton -> Color(0xFF0098EA)
+    is AccountType.Erc20 -> Color(0xFF8B9FE8)
+    is AccountType.Trc20 -> Color(0xFFFF4D5A)
+    is AccountType.TonToken -> Color(0xFF0098EA)
+}
+
+@Composable
 private fun AddressSection(address: String) {
     val clipboardManager = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
+
+    LaunchedEffect(copied) {
+        if (copied) {
+            kotlinx.coroutines.delay(2000)
+            copied = false
+        }
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -265,13 +325,6 @@ private fun AddressSection(address: String) {
                 }
             }
         }
-
-        LaunchedEffect(copied) {
-            if (copied) {
-                kotlinx.coroutines.delay(2000)
-                copied = false
-            }
-        }
     }
 }
 
@@ -284,11 +337,10 @@ private fun TransactionListSection(
     onLoadMore: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberLazyListState()
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
 
-    // Buffer-based loading: trigger when within 10 items of end
     val shouldLoadMore by remember {
-        derivedStateOf {
+        androidx.compose.runtime.derivedStateOf {
             val layoutInfo = listState.layoutInfo
             val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             val totalItems = layoutInfo.totalItemsCount
@@ -303,7 +355,6 @@ private fun TransactionListSection(
     }
 
     if (transactions.isEmpty() && !isLoadingMore) {
-        // Empty state
         Box(
             modifier = Modifier.then(modifier).fillMaxWidth(),
             contentAlignment = Alignment.Center
@@ -325,10 +376,10 @@ private fun TransactionListSection(
                 key = { it.id }
             ) { tx ->
                 TransactionItem(
-                        tx = tx,
-                        accountType = accountType,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    tx = tx,
+                    accountType = accountType,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
             if (isLoadingMore) {

@@ -139,7 +139,7 @@ class PinRepositoryImpl(
                 return@withContext VerifyResult.Corrupted
             }
 
-            val now = System.currentTimeMillis()
+            val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
 
             // Check lockout
             if (now < loaded.lockedUntil) {

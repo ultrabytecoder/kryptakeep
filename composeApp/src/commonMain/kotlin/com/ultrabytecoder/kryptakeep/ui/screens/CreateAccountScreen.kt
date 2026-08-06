@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,27 +23,21 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
+import compose.icons.feathericons.Search
+import compose.icons.feathericons.X
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.painterResource
+import org.koin.compose.koinInject
 import kryptakeep.composeapp.generated.resources.Res
 import kryptakeep.composeapp.generated.resources.ic_btc
 import kryptakeep.composeapp.generated.resources.ic_eth
 import kryptakeep.composeapp.generated.resources.ic_trx
 import kryptakeep.composeapp.generated.resources.ic_ton
-import kryptakeep.composeapp.generated.resources.ic_usdc
-import kryptakeep.composeapp.generated.resources.ic_link
-import kryptakeep.composeapp.generated.resources.ic_weth
-import kryptakeep.composeapp.generated.resources.ic_dai
-import kryptakeep.composeapp.generated.resources.ic_usdt
-import kryptakeep.composeapp.generated.resources.ic_wbtc
-import kryptakeep.composeapp.generated.resources.ic_btt
-import kryptakeep.composeapp.generated.resources.ic_token_trc20
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
-import com.ultrabytecoder.kryptakeep.data.TokenInfo
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CreateAccountViewModel
 import com.ultrabytecoder.kryptakeep.domain.model.AccountType as DomainAccountType
 import com.ultrabytecoder.kryptakeep.providers.DerivationPathResolver
-import org.koin.compose.koinInject
+import com.ultrabytecoder.kryptakeep.navigation.Screen
 
 private data class AccountTypeUi(
     val displayName: String,
@@ -51,37 +46,68 @@ private data class AccountTypeUi(
     val icon: DrawableResource
 )
 
-private fun buildAccountTypes(
-    erc20Tokens: Map<String, TokenInfo>,
-    trc20Tokens: Map<String, TokenInfo>
-): Map<DomainAccountType, AccountTypeUi> = buildMap {
-    put(DomainAccountType.Btc, AccountTypeUi("Bitcoin (BTC)", "BTC", Color(0xFFF7931A), Res.drawable.ic_btc))
-    put(DomainAccountType.Eth, AccountTypeUi("Ethereum (ETH)",  "ETH", Color(0xFF627EEA), Res.drawable.ic_eth))
-    put(DomainAccountType.Trx, AccountTypeUi("TRON (TRX)",  "TRX", Color(0xFFFF0013), Res.drawable.ic_trx))
-    put(DomainAccountType.Ton, AccountTypeUi("TON (TON)",  "TON", Color(0xFF0098EA), Res.drawable.ic_ton))
-    erc20Tokens.forEach { (symbol, info) ->
-        val icon = when (symbol) {
-            "USDC" -> Res.drawable.ic_usdc
-            "LINK" -> Res.drawable.ic_link
-            "WETH" -> Res.drawable.ic_weth
-            "DAI" -> Res.drawable.ic_dai
-            "USDT" -> Res.drawable.ic_usdt
-            "WBTC" -> Res.drawable.ic_wbtc
-            else -> Res.drawable.ic_eth
-        }
-        put(DomainAccountType.Erc20(info.address), AccountTypeUi("$symbol ETH", symbol, Color(0xFF8B9FE8), icon))
-    }
-    trc20Tokens.forEach { (symbol, info) ->
-        val icon = when (symbol) {
-            "USDT" -> Res.drawable.ic_usdt
-            "USDC" -> Res.drawable.ic_usdc
-            "BTT" -> Res.drawable.ic_btt
-            "WETH" -> Res.drawable.ic_weth
-            else -> Res.drawable.ic_token_trc20
-        }
-        put(DomainAccountType.Trc20(info.address), AccountTypeUi("$symbol TRX", symbol, Color(0xFFFF4D5A), icon))
-    }
+sealed interface CreatableItem {
+    val displayName: String
+    val tickerSymbol: String
+    val color: Color
+    val icon: DrawableResource
+
+    data class Native(
+        override val displayName: String,
+        override val tickerSymbol: String,
+        override val color: Color,
+        override val icon: DrawableResource,
+        val type: DomainAccountType
+    ) : CreatableItem
+
+    data class Token(
+        override val displayName: String,
+        override val tickerSymbol: String,
+        override val color: Color,
+        override val icon: DrawableResource,
+        val type: DomainAccountType,
+        val chainLabel: String
+    ) : CreatableItem
 }
+
+private fun buildCreatableItems(networkConfig: NetworkConfig): List<CreatableItem> {
+    val natives = listOf(
+        CreatableItem.Native("Bitcoin (BTC)", "BTC", Color(0xFFF7931A), Res.drawable.ic_btc, DomainAccountType.Btc),
+        CreatableItem.Native("Ethereum (ETH)", "ETH", Color(0xFF627EEA), Res.drawable.ic_eth, DomainAccountType.Eth),
+        CreatableItem.Native("TRON (TRX)", "TRX", Color(0xFFFF0013), Res.drawable.ic_trx, DomainAccountType.Trx),
+        CreatableItem.Native("TON (TON)", "TON", Color(0xFF0098EA), Res.drawable.ic_ton, DomainAccountType.Ton("V3R2"))
+    )
+    val erc20 = networkConfig.erc20Tokens.map { (symbol, info) ->
+        val type = DomainAccountType.Erc20(info.address)
+        CreatableItem.Token(
+            displayName = "$symbol (ERC20)",
+            tickerSymbol = symbol,
+            color = tokenColorFor(isErc20 = true),
+            icon = tokenIconFor(symbol, isErc20 = true),
+            type = type,
+            chainLabel = type.chainLabel
+        )
+    }
+    val trc20 = networkConfig.trc20Tokens.map { (symbol, info) ->
+        val type = DomainAccountType.Trc20(info.address)
+        CreatableItem.Token(
+            displayName = "$symbol (TRC20)",
+            tickerSymbol = symbol,
+            color = tokenColorFor(isErc20 = false),
+            icon = tokenIconFor(symbol, isErc20 = false),
+            type = type,
+            chainLabel = type.chainLabel
+        )
+    }
+    return natives + erc20 + trc20
+}
+
+private fun CreatableItem.toAccountTypeUi(): AccountTypeUi = AccountTypeUi(
+    displayName = displayName,
+    tickerSymbol = tickerSymbol,
+    color = color,
+    icon = icon
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,23 +115,50 @@ fun CreateAccountScreen(
     navController: NavController,
     viewModel: CreateAccountViewModel
 ) {
-    var selectedType by remember { mutableStateOf<DomainAccountType?>(null) }
-    var derivationPath by remember { mutableStateOf("") }
-    var isPathValid by remember { mutableStateOf(true) }
-    var selectedTonWalletVersion by remember { mutableStateOf("V3R2") }
-    val scope = rememberCoroutineScope()
     val networkConfig: NetworkConfig = koinInject()
-    val accountTypes = remember(networkConfig) {
-        buildAccountTypes(networkConfig.erc20Tokens, networkConfig.trc20Tokens)
-    }
-    val isTon = selectedType == DomainAccountType.Ton
+    val allItems = remember { buildCreatableItems(networkConfig) }
 
-    LaunchedEffect(selectedType) {
-        if (selectedType != null) {
-            derivationPath = viewModel.getDefaultDerivationPath(selectedType!!)
+    var selectedItem by remember { mutableStateOf<CreatableItem?>(null) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var derivationPath by rememberSaveable { mutableStateOf("") }
+    var isPathValid by remember { mutableStateOf(true) }
+    var selectedTonWalletVersion by rememberSaveable { mutableStateOf("V3R2") }
+    var isCreating by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
+
+    val filteredItems = remember(searchQuery, allItems) {
+        if (searchQuery.isBlank()) allItems
+        else allItems.filter {
+            it.displayName.contains(searchQuery, ignoreCase = true) ||
+            it.tickerSymbol.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    // Clear selection if filtered out
+    LaunchedEffect(filteredItems, selectedItem) {
+        if (selectedItem != null && selectedItem !in filteredItems) {
+            selectedItem = null
+        }
+    }
+
+    // Derivation path defaults for native selection
+    LaunchedEffect(selectedItem) {
+        val native = selectedItem as? CreatableItem.Native
+        if (native != null) {
+            derivationPath = viewModel.getDefaultDerivationPath(native.type)
             isPathValid = true
         }
     }
+
+    val isTon = (selectedItem as? CreatableItem.Native)?.type is DomainAccountType.Ton
+    val isToken = selectedItem is CreatableItem.Token
+    val isNative = selectedItem is CreatableItem.Native
+    val buttonEnabled = when {
+        isNative -> isPathValid && derivationPath.isNotBlank()
+        isToken -> true
+        else -> false
+    } && !isCreating
 
     Scaffold(
         topBar = {
@@ -117,7 +170,8 @@ fun CreateAccountScreen(
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -132,30 +186,54 @@ fun CreateAccountScreen(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                "Choose the type for your new account",
+                "Create a new account or add a token",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Search box
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                placeholder = { Text("Search by name or symbol") },
+                leadingIcon = {
+                    Icon(FeatherIcons.Search, contentDescription = "Search")
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(FeatherIcons.X, contentDescription = "Clear")
+                        }
+                    }
+                },
+                singleLine = true
+            )
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Unified grid
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                items(accountTypes.entries.toList()) { (domainType, accountTypeUi) ->
+                items(filteredItems) { item ->
                     AccountTypeCard(
-                        accountType = accountTypeUi,
-                        isSelected = selectedType == domainType,
-                        onClick = { selectedType = domainType }
+                        accountType = item.toAccountTypeUi(),
+                        isSelected = selectedItem == item,
+                        onClick = { selectedItem = item }
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (selectedType != null) {
+            // Derivation path — only for native types
+            val selectedNative = selectedItem as? CreatableItem.Native
+            if (selectedNative != null) {
                 Text(
                     "Derivation Path",
                     style = MaterialTheme.typography.titleSmall,
@@ -166,7 +244,11 @@ fun CreateAccountScreen(
                     value = derivationPath,
                     onValueChange = { newPath ->
                         derivationPath = newPath
-                        isPathValid = DerivationPathResolver.isValidPath(newPath, selectedType!!)
+                        isPathValid = DerivationPathResolver.isValidPath(
+                            newPath,
+                            selectedNative.type,
+                            networkConfig
+                        )
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -181,6 +263,7 @@ fun CreateAccountScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
+            // Wallet version — only for TON
             if (isTon) {
                 Text(
                     "Wallet Version",
@@ -205,30 +288,71 @@ fun CreateAccountScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
+            // Create / Add button
             Button(
                 onClick = {
-                    val type = selectedType ?: return@Button
-                    val ui = accountTypes[type]
-                    val displayName = ui?.displayName ?: "Wallet"
-                    val tickerSymbol = ui?.tickerSymbol ?: type.type
-                    val path = derivationPath.ifBlank { null }
-                    val params = if (type == DomainAccountType.Ton) {
-                        """{"walletVersion":"$selectedTonWalletVersion"}"""
-                    } else {
-                        null
-                    }
+                    if (isCreating) return@Button
+                    isCreating = true
                     scope.launch {
-                        viewModel.createAccount(displayName, type, tickerSymbol, params, path)
-                        navController.popBackStack()
+                        try {
+                            when (val item = selectedItem) {
+                            is CreatableItem.Native -> {
+                                val finalType = if (item.type is DomainAccountType.Ton) {
+                                    DomainAccountType.Ton(walletVersion = selectedTonWalletVersion)
+                                } else {
+                                    item.type
+                                }
+                                val path = derivationPath.ifBlank { null }
+                                val params = if (finalType is DomainAccountType.Ton) {
+                                    """{"walletVersion":"$selectedTonWalletVersion"}"""
+                                } else {
+                                    null
+                                }
+                                viewModel.createAccount(
+                                    displayName = item.displayName,
+                                    type = finalType,
+                                    symbol = item.tickerSymbol,
+                                    params = params,
+                                    derivationPath = path
+                                )
+                                navController.popBackStack()
+                            }
+                            is CreatableItem.Token -> {
+                                when (val r = viewModel.createToken(item.type, item.tickerSymbol)) {
+                                    is com.ultrabytecoder.kryptakeep.domain.usecase.CreateTokenUseCase.Result.Created -> {
+                                        navController.popBackStack()
+                                    }
+                                    is com.ultrabytecoder.kryptakeep.domain.usecase.CreateTokenUseCase.Result.NeedsParentSelection -> {
+                                        navController.navigate(
+                                            Screen.AddToken(
+                                                walletId = viewModel.walletId,
+                                                preselectedTokenAddress = r.tokenAddress,
+                                                preselectedTokenType = r.tokenTypeCode,
+                                                requireManualSelection = true
+                                            )
+                                        ) {
+                                            popUpTo<Screen.CreateAccount> { inclusive = true }
+                                        }
+                                    }
+                                }
+                            }
+                            null -> Unit
+                        }
+                    } catch (e: Exception) {
+                        snackbarHostState.showSnackbar(e.message ?: "Failed to create account")
+                    } finally {
+                        isCreating = false
                     }
-                },
-                enabled = selectedType != null && isPathValid && derivationPath.isNotBlank(),
+                }
+            },
+                enabled = buttonEnabled,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Create Account")
+                Text(if (isToken) "Add Token" else "Create Account")
             }
-        }
+
+                    }
     }
 }
 

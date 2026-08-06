@@ -94,6 +94,7 @@ class SetupPinViewModel(
                 setupPinUseCase(confirmPin)
                 val walletId = getWalletsUseCase().first().firstOrNull()?.id
                 if (walletId != null) {
+                    _state.update { it.copy(isProcessing = false) }
                     syncUseCase(viewModelScope, walletId, SyncMode.FULL)
                     _events.emit(SetupPinEvent.NavigateToAccountsList(walletId))
                 } else {

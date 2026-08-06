@@ -88,7 +88,13 @@ fun PinScreenSetup(
                     pinLength = PinConfig.LENGTH
                 )
 
-                if (state.errorMessage != null) {
+if (state.isProcessing) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else if (state.errorMessage != null) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         state.errorMessage!!,
@@ -206,7 +212,13 @@ fun PinScreenEnter(
                     modifier = Modifier.offset { IntOffset(shakeOffset.toInt(), 0) }
                 )
 
-                if (state.isLocked) {
+                if (state.isProcessing) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else if (state.isLocked) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         "Too many attempts. Try again in ${state.lockSecondsRemaining}s",

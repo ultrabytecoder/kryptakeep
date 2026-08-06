@@ -60,7 +60,11 @@ class EthProvider(
             }
             val body = response.body<String>()
             val json = Json.parseToJsonElement(body).jsonObject
-            val hexBalance = json["result"]!!.jsonPrimitive.content.removePrefix("0x")
+            val result = json["result"]
+                ?: json["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
+                    ?.let { throw IllegalStateException("ETH RPC error: $it") }
+                ?: throw IllegalStateException("ETH RPC returned no result and no error: $body")
+            val hexBalance = result.jsonPrimitive.content.removePrefix("0x")
             return BigDecimal.fromLong(hexBalance.toLong(16))
         } finally {
             client.close()

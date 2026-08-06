@@ -44,6 +44,7 @@ import compose.icons.feathericons.Check
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
+import com.ultrabytecoder.kryptakeep.platform.preventScreenshots
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.ExportMnemonicViewModel
 import kotlinx.coroutines.delay
 
@@ -82,6 +83,7 @@ fun ExportMnemonicScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .padding(16.dp)
+                .preventScreenshots()
         ) {
             when (state) {
                 is ExportMnemonicViewModel.State.Loading -> {

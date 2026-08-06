@@ -36,10 +36,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material3.ripple
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
+import compose.icons.feathericons.Server
 import compose.icons.feathericons.Shield
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
+import com.ultrabytecoder.kryptakeep.navigation.Screen
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SettingsPinAction
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SettingsViewModel
 
@@ -123,6 +128,60 @@ fun SettingsScreen(
                         Switch(
                             checked = isBiometricEnabled,
                             onCheckedChange = { viewModel.toggleBiometric(it) }
+                        )
+                    }
+                }
+            }
+
+            // Network section
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                "Network",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(),
+                        onClick = { navController.navigate(Screen.CustomNodes) }
+                    ),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        FeatherIcons.Server,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Custom Nodes",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Set custom RPC/API endpoints for BTC, ETH, TRX, TON",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
