@@ -39,6 +39,13 @@ data class NetworkConfig(
     val trc20Tokens: Map<String, TokenInfo>,
 ) {
     companion object {
+        // EIP-1559: 25% safety margin on baseFee to account for next-block fluctuations
+        const val ETH_BASE_FEE_MARGIN_NUMERATOR = 125
+        const val ETH_BASE_FEE_MARGIN_DENOMINATOR = 100
+        // Gas buffer multiplier for eth_estimateGas results (20%)
+        const val ETH_GAS_BUFFER_NUMERATOR = 120
+        const val ETH_GAS_BUFFER_DENOMINATOR = 100
+
         fun testnet(etherscanApiKey: String): NetworkConfig = NetworkConfig(
             ethRpcUrl = "https://ethereum-sepolia-rpc.publicnode.com",
             ethChainId = 11155111L,
@@ -47,7 +54,7 @@ data class NetworkConfig(
             ethEtherscanApiBase = "https://api.etherscan.io/v2/api",
             ethEtherscanApiKey = etherscanApiKey,
             tronApiBase = "https://nile.trongrid.io",
-            trc20FeeLimit = 100_000_000L,
+            trc20FeeLimit = 30_000_000L,
             tonApiBase = "http://10.0.2.2:8081",
             tonNanotonsPerTon = 1_000_000_000L,
             btcMempoolApiBase = "https://mempool.space/signet/api",
@@ -65,7 +72,7 @@ data class NetworkConfig(
             ethEtherscanApiBase = "https://api.etherscan.io/v2/api",
             ethEtherscanApiKey = etherscanApiKey,
             tronApiBase = "https://api.trongrid.io",
-            trc20FeeLimit = 100_000_000L,
+            trc20FeeLimit = 30_000_000L,
             tonApiBase = "https://toncenter.com/api/v2",
             tonNanotonsPerTon = 1_000_000_000L,
             btcMempoolApiBase = "https://mempool.space/api",

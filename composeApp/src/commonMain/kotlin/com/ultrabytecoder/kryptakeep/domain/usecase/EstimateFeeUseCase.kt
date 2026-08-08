@@ -2,6 +2,7 @@ package com.ultrabytecoder.kryptakeep.domain.usecase
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
@@ -15,11 +16,16 @@ class EstimateFeeUseCase(
     private val keyProvider: KeyProvider,
     private val networkConfig: NetworkConfig
 ) {
-    suspend operator fun invoke(accountId: String, amount: BigDecimal): BigDecimal {
+    suspend operator fun invoke(
+        accountId: String,
+        amount: BigDecimal,
+        recipientAddress: String? = null,
+        feeParams: CustomFeeParams? = null
+    ): BigDecimal {
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
 
         val provider = ProviderFactory.create(account.type, keyProvider, account.walletId, utxoRepository, accountRepository, transactionRepository, networkConfig, account.params)
-        return provider.estimateFee(account.id, amount)
+        return provider.estimateFee(account.id, amount, recipientAddress, feeParams)
     }
 }

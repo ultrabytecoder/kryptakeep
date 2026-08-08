@@ -33,6 +33,8 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionStatus
@@ -57,7 +59,7 @@ class BtcProvider(
 ) : Provider {
 
     companion object {
-        private const val FALLBACK_FEE_RATE = 2L  // sat/vByte, used when API is unreachable
+        private const val FALLBACK_FEE_RATE = 10L  // sat/vByte, used when API is unreachable
         private const val GAP_LIMIT = 20
         private const val RECEIVE_CHAIN = 0
         private const val CHANGE_CHAIN = 1
@@ -423,14 +425,16 @@ class BtcProvider(
         }
     }
 
-    private fun selectInputs(requiredAmount: Long, utxos: List<UtxoInfo>): List<UtxoInfo>? {
+    private fun selectInputs(requiredAmount: Long, feeRate: Long, utxos: List<UtxoInfo>): List<UtxoInfo>? {
         val sorted = utxos.sortedByDescending { it.amount }
         val selected = mutableListOf<UtxoInfo>()
         var sum = 0L
         for (utxo in sorted) {
             selected.add(utxo)
             sum += utxo.amount
-            if (sum >= requiredAmount) {
+            // Calculate fee dynamically as inputs grow
+            val estimatedFee = estimateVSize(selected.size, 2) * feeRate
+            if (sum >= requiredAmount + estimatedFee) {
                 return selected
             }
         }
@@ -443,16 +447,25 @@ class BtcProvider(
         return BigDecimal.fromLong(totalSats)
     }
 
-    private suspend fun buildSignedTransaction(address: String, amount: BigDecimal, accountId: String): Triple<String, List<Long>, Boolean> {
-        val destAmountSat = amount.multiply(BigDecimal.fromLong(100_000_000)).longValue()
+    private suspend fun buildSignedTransaction(
+    address: String,
+    amount: BigDecimal,
+    accountId: String,
+    feeParams: CustomFeeParams? = null
+): Triple<String, List<Long>, Boolean> {
+        val destAmountSat = amount.multiply(BigDecimal.fromLong(100_000_000)).longValue(exactRequired = false)
 
         val allUtxos = utxoRepository.getUtxosByAccount(accountId)
         check(allUtxos.isNotEmpty()) { "No UTXOs found for account $accountId" }
 
-        val selectedUtxos = selectInputs(destAmountSat, allUtxos)
+        val feeRate = when (feeParams) {
+            is CustomFeeParams.Btc -> feeParams.feeRateSatVb
+            else -> fetchFeeRate()
+        }
+        val selectedUtxos = selectInputs(destAmountSat, feeRate, allUtxos)
             ?: throw IllegalStateException("Not enough funds - have ${allUtxos.sumOf { it.amount }} sat but need $destAmountSat sat")
 
-        val fee = estimateVSize(selectedUtxos.size, 2) * fetchFeeRate()
+        val fee = estimateVSize(selectedUtxos.size, 2) * feeRate
         val inputsSum = selectedUtxos.sumOf { it.amount }
         val changeAmount = inputsSum - destAmountSat - fee
 
@@ -515,31 +528,42 @@ class BtcProvider(
         return Triple(txHex, selectedUtxos.map { it.id }, changeAmount > 0)
     }
 
-    override suspend fun estimateFee(accountId: String, amount: BigDecimal): BigDecimal {
-        val destAmountSat = amount.multiply(BigDecimal.fromLong(100_000_000)).longValue()
+    override suspend fun estimateFee(
+        accountId: String,
+        amount: BigDecimal,
+        recipientAddress: String?,
+        feeParams: CustomFeeParams?
+    ): BigDecimal {
+        val destAmountSat = amount.multiply(BigDecimal.fromLong(100_000_000)).longValue(exactRequired = false)
         val allUtxos = utxoRepository.getUtxosByAccount(accountId)
-        val numInputs = if (allUtxos.isNotEmpty()) {
-            val selected = selectInputs(destAmountSat, allUtxos)
-            selected?.size ?: allUtxos.size
-        } else {
-            1
+        if (allUtxos.isEmpty()) {
+            return BigDecimal.ZERO
         }
-        val feeSat = estimateVSize(numInputs, 2) * fetchFeeRate()
+        val feeRate = when (feeParams) {
+            is CustomFeeParams.Btc -> feeParams.feeRateSatVb
+            else -> fetchFeeRate()
+        }
+        val selected = selectInputs(destAmountSat, feeRate, allUtxos)
+        val numInputs = selected?.size ?: allUtxos.size
+        val feeSat = estimateVSize(numInputs, 2) * feeRate
         return BigDecimal.fromLong(feeSat).divide(BigDecimal.fromLong(100_000_000))
     }
 
-    override suspend fun createTransaction(address: String, amount: BigDecimal, accountId: String): String {
-        return buildSignedTransaction(address, amount, accountId).first
+    override suspend fun createTransaction(
+        address: String,
+        amount: BigDecimal,
+        accountId: String,
+        feeParams: CustomFeeParams?
+    ): String {
+        return buildSignedTransaction(address, amount, accountId, feeParams).first
     }
 
-    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
-        val (txHex, spentUtxoIds, hasChange) = buildSignedTransaction(address, amount, accountId)
-
+    override suspend fun broadcast(rawTransaction: String): String {
         val client = createClient()
         try {
             val broadcastResponse: HttpResponse = client.post("${networkConfig.btcMempoolApiBase}/tx") {
                 contentType(ContentType.Text.Plain)
-                setBody(txHex)
+                setBody(rawTransaction)
             }
 
             if (broadcastResponse.status != HttpStatusCode.OK) {
@@ -547,21 +571,65 @@ class BtcProvider(
                 throw IllegalStateException("Broadcast failed (${broadcastResponse.status.value}): $errorBody")
             }
 
-            val txid = broadcastResponse.body<String>()
-
-            for (id in spentUtxoIds) {
-                utxoRepository.deleteUtxo(id)
-            }
-
-            if (hasChange) {
-                val currentIndex = params["current_change_key_id"]?.jsonPrimitive?.long ?: 0L
-                val updatedParams = JsonObject(params.toMutableMap() + ("current_change_key_id" to JsonPrimitive(currentIndex + 1)))
-                accountRepository.updateParams(accountId, updatedParams.toString())
-            }
-
-            return txid
+            return broadcastResponse.body<String>()
         } finally {
             client.close()
+        }
+    }
+
+    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
+        val (txHex, spentUtxoIds, hasChange) = buildSignedTransaction(address, amount, accountId, null)
+
+        val txid = broadcast(txHex)
+
+        for (id in spentUtxoIds) {
+            utxoRepository.deleteUtxo(id)
+        }
+
+        if (hasChange) {
+            val currentIndex = params["current_change_key_id"]?.jsonPrimitive?.long ?: 0L
+            val updatedParams = JsonObject(params.toMutableMap() + ("current_change_key_id" to JsonPrimitive(currentIndex + 1)))
+            accountRepository.updateParams(accountId, updatedParams.toString())
+        }
+
+        return txid
+    }
+
+    override suspend fun feePresets(accountId: String): FeePresets {
+        val fees = try {
+            val client = createClient()
+            try {
+                val response: HttpResponse = client.get("${networkConfig.btcMempoolApiBase}/v1/fees/recommended")
+                if (response.status == HttpStatusCode.OK) {
+                    val body = response.body<String>()
+                    val json = Json.parseToJsonElement(body).jsonObject
+                    Triple(
+                        json["hourFee"]?.jsonPrimitive?.longOrNull ?: FALLBACK_FEE_RATE,
+                        json["halfHourFee"]?.jsonPrimitive?.longOrNull ?: FALLBACK_FEE_RATE,
+                        json["fastestFee"]?.jsonPrimitive?.longOrNull ?: FALLBACK_FEE_RATE
+                    )
+                } else {
+                    null
+                }
+            } finally {
+                client.close()
+            }
+        } catch (_: Exception) {
+            null
+        }
+
+        return if (fees != null) {
+            FeePresets(
+                slow = CustomFeeParams.Btc(fees.first),
+                medium = CustomFeeParams.Btc(fees.second),
+                fast = CustomFeeParams.Btc(fees.third)
+            )
+        } else {
+            FeePresets(
+                slow = CustomFeeParams.Btc(5L),
+                medium = CustomFeeParams.Btc(FALLBACK_FEE_RATE),
+                fast = CustomFeeParams.Btc(20L)
+            )
         }
     }
 

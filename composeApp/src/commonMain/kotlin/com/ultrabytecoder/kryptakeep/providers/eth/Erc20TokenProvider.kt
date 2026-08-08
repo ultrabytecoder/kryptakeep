@@ -2,6 +2,8 @@ package com.ultrabytecoder.kryptakeep.providers
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionStatus
@@ -163,7 +165,12 @@ class Erc20TokenProvider(
         )
     }
 
-    override suspend fun createTransaction(address: String, amount: BigDecimal, accountId: String): String {
+    override suspend fun createTransaction(
+        address: String,
+        amount: BigDecimal,
+        accountId: String,
+        feeParams: CustomFeeParams?
+    ): String {
         val decimals = fetchDecimals()
         val rawAmount = amount.multiply(BigDecimal.fromLong(10).pow(decimals)).toBigInteger()
         val addressBytes = ByteArray(32).also {
@@ -185,12 +192,24 @@ class Erc20TokenProvider(
         val client = createClient()
         try {
             val nonce = ethGetTransactionCount(client, fromAddress)
-            val gasTipCap = ethMaxPriorityFeePerGas(client)
-            val baseFee = ethBaseFee(client)
-            val gasFeeCap = (baseFee + gasTipCap) * 125 / 100
 
-            val estimatedGas = ethEstimateGas(client, fromAddress, contractAddress, dataHex, gasFeeCap, gasTipCap)
-            val gasLimit = if (estimatedGas > 0) estimatedGas * 120 / 100 else 65_000L
+            val (gasTipCap, gasFeeCap) = when (feeParams) {
+                is CustomFeeParams.Eth -> {
+                    feeParams.maxPriorityFeePerGasGwei * 1_000_000_000L to feeParams.maxFeePerGasGwei * 1_000_000_000L
+                }
+                else -> computeFeeParams(client)
+            }
+
+            val gasLimit = when (feeParams) {
+                is CustomFeeParams.Eth -> feeParams.gasLimit ?: run {
+                    val estimatedGas = ethEstimateGas(client, fromAddress, contractAddress, dataHex, gasFeeCap, gasTipCap)
+                    if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethErc20GasLimit
+                }
+                else -> {
+                    val estimatedGas = ethEstimateGas(client, fromAddress, contractAddress, dataHex, gasFeeCap, gasTipCap)
+                    if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethErc20GasLimit
+                }
+            }
 
             return signEip1559Transaction(
                 nonce, gasTipCap, gasFeeCap, gasLimit, contractAddress, 0, data, fromKey
@@ -200,25 +219,91 @@ class Erc20TokenProvider(
         }
     }
 
-    override suspend fun estimateFee(accountId: String, amount: BigDecimal): BigDecimal {
+    override suspend fun estimateFee(
+        accountId: String,
+        amount: BigDecimal,
+        recipientAddress: String?,
+        feeParams: CustomFeeParams?
+    ): BigDecimal {
+        val fromAddress = getAddress(accountId)
+        val toAddress = recipientAddress ?: fromAddress
+
+        // Build ERC-20 transfer calldata for accurate gas estimation
+        val decimals = fetchDecimals()
+        val rawAmount = amount.multiply(BigDecimal.fromLong(10).pow(decimals)).toBigInteger()
+        val addressBytes = ByteArray(32).also {
+            val addr = toAddress.removePrefix("0x").chunked(2).map { h -> h.toInt(16).toByte() }.toByteArray()
+            addr.copyInto(it, 12)
+        }
+        val amountBytes = ByteArray(32).also {
+            val raw = rawAmount.toByteArray()
+            raw.copyInto(it, 32 - raw.size)
+        }
+        val data = byteArrayOf(0xa9.toByte(), 0x05.toByte(), 0x9c.toByte(), 0xbb.toByte()) + addressBytes + amountBytes
+        val dataHex = "0x" + data.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
+
         val client = createClient()
         try {
-            val gasTipCap = ethMaxPriorityFeePerGas(client)
-            val baseFee = ethBaseFee(client)
-            val gasFeeCap = (baseFee + gasTipCap) * 125 / 100
-            val feeWei = gasFeeCap * networkConfig.ethErc20GasLimit
-            return BigDecimal.fromLong(feeWei).divide(BigDecimal.fromLong(1_000_000_000_000_000_000))
+            val (tipCap, feeCap) = when (feeParams) {
+                is CustomFeeParams.Eth -> {
+                    feeParams.maxPriorityFeePerGasGwei * 1_000_000_000L to feeParams.maxFeePerGasGwei * 1_000_000_000L
+                }
+                else -> computeFeeParams(client)
+            }
+
+            val estimatedGas = ethEstimateGas(client, fromAddress, contractAddress, dataHex, feeCap, tipCap)
+            val gasLimit = when (feeParams) {
+                is CustomFeeParams.Eth -> feeParams.gasLimit ?: run {
+                    if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethErc20GasLimit
+                }
+                else -> if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethErc20GasLimit
+            }
+
+            val feeWei = BigDecimal.fromLong(feeCap).multiply(BigDecimal.fromLong(gasLimit))
+            return feeWei.divide(BigDecimal.fromLong(1_000_000_000_000_000_000))
+        } finally {
+            client.close()
+        }
+    }
+
+    override suspend fun broadcast(rawTransaction: String): String {
+        val client = createClient()
+        try {
+            return ethSendRawTransaction(client, rawTransaction)
         } finally {
             client.close()
         }
     }
 
     override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
-        val rawTxHex = createTransaction(address, amount, accountId)
+        val rawTxHex = createTransaction(address, amount, accountId, null)
+        return broadcast(rawTxHex)
+    }
 
+    override suspend fun feePresets(accountId: String): FeePresets {
         val client = createClient()
         try {
-            return ethSendRawTransaction(client, rawTxHex)
+            val (tipCap, feeCap) = computeFeeParams(client)
+            val tipGwei = (tipCap / 1_000_000_000).coerceAtLeast(1L)
+            val capGwei = (feeCap / 1_000_000_000).coerceAtLeast(tipGwei + 1L)
+
+            val slowTip = (tipGwei * 70 / 100).coerceAtLeast(1L)
+            val slowCap = (capGwei * 85 / 100).coerceAtLeast(slowTip + 1L)
+
+            val fastTip = (tipGwei * 150 / 100).coerceAtLeast(tipGwei + 1L)
+            val fastCap = (capGwei * 150 / 100).coerceAtLeast(fastTip + 1L)
+
+            return FeePresets(
+                slow = CustomFeeParams.Eth(slowTip, slowCap),
+                medium = CustomFeeParams.Eth(tipGwei, capGwei),
+                fast = CustomFeeParams.Eth(fastTip, fastCap)
+            )
+        } catch (_: Exception) {
+            return FeePresets(
+                slow = CustomFeeParams.Eth(15L, 20L),
+                medium = CustomFeeParams.Eth(25L, 35L),
+                fast = CustomFeeParams.Eth(40L, 60L)
+            )
         } finally {
             client.close()
         }

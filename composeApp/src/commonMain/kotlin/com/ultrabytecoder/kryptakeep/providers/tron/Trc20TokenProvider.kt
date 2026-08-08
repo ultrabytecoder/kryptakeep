@@ -2,6 +2,8 @@ package com.ultrabytecoder.kryptakeep.providers.tron
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionStatus
@@ -10,6 +12,7 @@ import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.providers.Provider
 import com.ultrabytecoder.kryptakeep.providers.SyncMode
 import com.ultrabytecoder.kryptakeep.providers.TrxBase
+import com.ultrabytecoder.kryptakeep.providers.sunToTrx
 import fr.acinq.bitcoin.DeterministicWallet
 import fr.acinq.secp256k1.Hex
 import io.ktor.client.HttpClient
@@ -79,11 +82,55 @@ class Trc20TokenProvider(
         }
     }
 
-    override suspend fun estimateFee(accountId: String, amount: BigDecimal): BigDecimal {
-        return BigDecimal.fromLong(networkConfig.trc20FeeLimit).divide(BigDecimal.fromLong(1_000_000))
+    override suspend fun estimateFee(
+        accountId: String,
+        amount: BigDecimal,
+        recipientAddress: String?,
+        feeParams: CustomFeeParams?
+    ): BigDecimal {
+        val feeLimit = when (feeParams) {
+            is CustomFeeParams.Trc20 -> feeParams.feeLimitSun
+            else -> networkConfig.trc20FeeLimit
+        }
+        val decimals = fetchDecimals(accountId)
+        val rawAmount = amount.multiply(BigDecimal.Companion.fromLong(10).pow(decimals)).longValue()
+        // Use a zeroed recipient address for the calldata — energy cost is the same for any recipient
+        val zeroAddress = ByteArray(32)
+        val amountHex = rawAmount.toString(16).padStart(64, '0')
+        val parameter = zeroAddress.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') } + amountHex
+
+        val fromAddress = getAddress(accountId)
+        val client = createClient()
+        try {
+            val triggerJson = tronTriggerSmartContract(
+                client, contractAddress,
+                "transfer(address,uint256)", parameter, fromAddress,
+                feeLimit = feeLimit
+            )
+
+            // Extract actual energy used from the simulation
+            val energyUsed = triggerJson["energy_used"]?.jsonPrimitive?.longOrNull
+            if (energyUsed != null && energyUsed > 0) {
+                // energy_used is in energy units; 1 energy = 1 SUN of TRX fee
+                return sunToTrx(BigDecimal.fromLong(energyUsed))
+            }
+            // Fallback to a reasonable estimate if simulation fails
+            return BigDecimal.fromLong(20_000_000).divide(BigDecimal.fromLong(1_000_000))
+        } finally {
+            client.close()
+        }
     }
 
-    override suspend fun createTransaction(address: String, amount: BigDecimal, accountId: String): String {
+    override suspend fun createTransaction(
+        address: String,
+        amount: BigDecimal,
+        accountId: String,
+        feeParams: CustomFeeParams?
+    ): String {
+        val feeLimit = when (feeParams) {
+            is CustomFeeParams.Trc20 -> feeParams.feeLimitSun
+            else -> networkConfig.trc20FeeLimit
+        }
         val decimals = fetchDecimals(accountId)
         val rawAmount = amount.multiply(BigDecimal.Companion.fromLong(10).pow(decimals)).longValue()
         val addressHex = encodeTronAddressParameter(address)
@@ -100,7 +147,7 @@ class Trc20TokenProvider(
             val triggerJson = tronTriggerSmartContract(
                 client, contractAddress,
                 "transfer(address,uint256)", parameter, fromAddress,
-                feeLimit = networkConfig.trc20FeeLimit
+                feeLimit = feeLimit
             )
 
             check(!triggerJson.containsKey("Error")) { "Error triggering smart contract: ${triggerJson["Error"]}" }
@@ -128,15 +175,26 @@ class Trc20TokenProvider(
         }
     }
 
-    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
-        val broadcastBody = createTransaction(address, amount, accountId)
-
+    override suspend fun broadcast(rawTransaction: String): String {
         val client = createClient()
         try {
-            return broadcastSignedTransaction(client, broadcastBody)
+            return broadcastSignedTransaction(client, rawTransaction)
         } finally {
             client.close()
         }
+    }
+
+    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
+        val broadcastBody = createTransaction(address, amount, accountId, null)
+        return broadcast(broadcastBody)
+    }
+
+    override suspend fun feePresets(accountId: String): FeePresets {
+        return FeePresets(
+            slow = CustomFeeParams.Trc20(20_000_000L),
+            medium = CustomFeeParams.Trc20(35_000_000L),
+            fast = CustomFeeParams.Trc20(50_000_000L)
+        )
     }
 
     private suspend fun fetchTransactions(

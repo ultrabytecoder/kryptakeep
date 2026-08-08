@@ -2,6 +2,8 @@ package com.ultrabytecoder.kryptakeep.providers
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionStatus
@@ -163,8 +165,13 @@ class EthProvider(
         )
     }
 
-    override suspend fun createTransaction(address: String, amount: BigDecimal, accountId: String): String {
-        val weiAmount = amount.multiply(BigDecimal.fromLong(1_000_000_000_000_000_000)).longValue()
+    override suspend fun createTransaction(
+        address: String,
+        amount: BigDecimal,
+        accountId: String,
+        feeParams: CustomFeeParams?
+    ): String {
+        val weiAmount = amount.multiply(BigDecimal.fromLong(1_000_000_000_000_000_000)).longValue(exactRequired = false)
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
         val fromKey = deriveEthKeyFromPath(account.derivationPath)
@@ -173,37 +180,104 @@ class EthProvider(
         val client = createClient()
         try {
             val nonce = ethGetTransactionCount(client, fromAddress)
-            val gasTipCap = ethMaxPriorityFeePerGas(client)
-            val baseFee = ethBaseFee(client)
-            val gasFeeCap = baseFee + gasTipCap
+
+            val (gasTipCap, gasFeeCap) = when (feeParams) {
+                is CustomFeeParams.Eth -> {
+                    feeParams.maxPriorityFeePerGasGwei * 1_000_000_000L to feeParams.maxFeePerGasGwei * 1_000_000_000L
+                }
+                else -> computeFeeParams(client)
+            }
+
+            val gasLimit = when (feeParams) {
+                is CustomFeeParams.Eth -> feeParams.gasLimit ?: run {
+                    val estimatedGas = ethEstimateGas(client, fromAddress, address, "0x", gasFeeCap, gasTipCap)
+                    if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethGasLimit
+                }
+                else -> {
+                    val estimatedGas = ethEstimateGas(client, fromAddress, address, "0x", gasFeeCap, gasTipCap)
+                    if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethGasLimit
+                }
+            }
 
             return signEip1559Transaction(
-                nonce, gasTipCap, gasFeeCap, networkConfig.ethGasLimit, address, weiAmount, byteArrayOf(), fromKey
+                nonce, gasTipCap, gasFeeCap, gasLimit, address, weiAmount, byteArrayOf(), fromKey
             )
         } finally {
             client.close()
         }
     }
 
-    override suspend fun estimateFee(accountId: String, amount: BigDecimal): BigDecimal {
+    override suspend fun estimateFee(
+        accountId: String,
+        amount: BigDecimal,
+        recipientAddress: String?,
+        feeParams: CustomFeeParams?
+    ): BigDecimal {
+        val fromAddress = getAddress(accountId)
+        val toAddress = recipientAddress ?: fromAddress
+
         val client = createClient()
         try {
-            val gasTipCap = ethMaxPriorityFeePerGas(client)
-            val baseFee = ethBaseFee(client)
-            val gasFeeCap = baseFee + gasTipCap
-            val feeWei = gasFeeCap * networkConfig.ethGasLimit
-            return BigDecimal.fromLong(feeWei).divide(BigDecimal.fromLong(1_000_000_000_000_000_000))
+            val (tipCap, feeCap) = when (feeParams) {
+                is CustomFeeParams.Eth -> {
+                    feeParams.maxPriorityFeePerGasGwei * 1_000_000_000L to feeParams.maxFeePerGasGwei * 1_000_000_000L
+                }
+                else -> computeFeeParams(client)
+            }
+
+            val estimatedGas = ethEstimateGas(client, fromAddress, toAddress, "0x", feeCap, tipCap)
+            val gasLimit = when (feeParams) {
+                is CustomFeeParams.Eth -> feeParams.gasLimit ?: run {
+                    if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethGasLimit
+                }
+                else -> if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethGasLimit
+            }
+
+            val feeWei = BigDecimal.fromLong(feeCap).multiply(BigDecimal.fromLong(gasLimit))
+            return feeWei.divide(BigDecimal.fromLong(1_000_000_000_000_000_000))
+        } finally {
+            client.close()
+        }
+    }
+
+    override suspend fun broadcast(rawTransaction: String): String {
+        val client = createClient()
+        try {
+            return ethSendRawTransaction(client, rawTransaction)
         } finally {
             client.close()
         }
     }
 
     override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
-        val rawTxHex = createTransaction(address, amount, accountId)
+        val rawTxHex = createTransaction(address, amount, accountId, null)
+        return broadcast(rawTxHex)
+    }
 
+    override suspend fun feePresets(accountId: String): FeePresets {
         val client = createClient()
         try {
-            return ethSendRawTransaction(client, rawTxHex)
+            val (tipCap, feeCap) = computeFeeParams(client)
+            val tipGwei = (tipCap / 1_000_000_000).coerceAtLeast(1L)
+            val capGwei = (feeCap / 1_000_000_000).coerceAtLeast(tipGwei + 1L)
+
+            val slowTip = (tipGwei * 70 / 100).coerceAtLeast(1L)
+            val slowCap = (capGwei * 85 / 100).coerceAtLeast(slowTip + 1L)
+
+            val fastTip = (tipGwei * 150 / 100).coerceAtLeast(tipGwei + 1L)
+            val fastCap = (capGwei * 150 / 100).coerceAtLeast(fastTip + 1L)
+
+            return FeePresets(
+                slow = CustomFeeParams.Eth(slowTip, slowCap),
+                medium = CustomFeeParams.Eth(tipGwei, capGwei),
+                fast = CustomFeeParams.Eth(fastTip, fastCap)
+            )
+        } catch (_: Exception) {
+            return FeePresets(
+                slow = CustomFeeParams.Eth(15L, 20L),
+                medium = CustomFeeParams.Eth(25L, 35L),
+                fast = CustomFeeParams.Eth(40L, 60L)
+            )
         } finally {
             client.close()
         }

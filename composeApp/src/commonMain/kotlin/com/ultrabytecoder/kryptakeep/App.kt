@@ -149,8 +149,15 @@ fun App() {
                 val send: SendUseCase = koinInject()
                 val estimateFee: EstimateFeeUseCase = koinInject()
                 val syncAccount: SyncAccountUseCase = koinInject()
+                val accountRepository: com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository = koinInject()
+                val utxoRepository: com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository = koinInject()
+                val transactionRepository: com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository = koinInject()
+                val keyProvider: com.ultrabytecoder.kryptakeep.domain.service.KeyProvider = koinInject()
+                val networkConfig: com.ultrabytecoder.kryptakeep.data.NetworkConfig = koinInject()
+                val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
                 val viewModel = remember(route.accountId) {
-                    SendViewModel(route.accountId, getAccounts, send, estimateFee, syncAccount)
+                    SendViewModel(route.accountId, getAccounts, send, estimateFee, syncAccount,
+                        accountRepository, utxoRepository, transactionRepository, keyProvider, networkConfig, settingsStorage)
                 }
                 SendScreen(navController, viewModel)
             }

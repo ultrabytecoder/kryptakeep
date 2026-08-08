@@ -109,6 +109,24 @@ abstract class EthBase(
         return json["result"]!!.jsonPrimitive.content.removePrefix("0x").toLong(16)
     }
 
+    /**
+     * Compute EIP-1559 fee parameters with a 25% safety margin on baseFee.
+     * Falls back to [ethGasPrice] if eth_maxPriorityFeePerGas or eth_getBlockByNumber fail.
+     */
+    protected suspend fun computeFeeParams(client: HttpClient): Pair<Long, Long> {
+        return try {
+            val gasTipCap = ethMaxPriorityFeePerGas(client)
+            val baseFee = ethBaseFee(client)
+            val gasFeeCap = (baseFee * NetworkConfig.ETH_BASE_FEE_MARGIN_NUMERATOR / NetworkConfig.ETH_BASE_FEE_MARGIN_DENOMINATOR) + gasTipCap
+            gasTipCap to gasFeeCap
+        } catch (e: Exception) {
+            // Fallback to legacy eth_gasPrice
+            val gasPrice = ethGasPrice(client)
+            val tipCap = minOf(gasPrice / 2, gasPrice)
+            tipCap to gasPrice
+        }
+    }
+
     protected suspend fun ethSendRawTransaction(client: HttpClient, rawTx: String): String {
         val response: HttpResponse = client.post(networkConfig.ethRpcUrl) {
             contentType(ContentType.Application.Json)

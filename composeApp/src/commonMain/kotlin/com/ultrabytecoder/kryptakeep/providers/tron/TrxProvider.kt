@@ -2,6 +2,8 @@ package com.ultrabytecoder.kryptakeep.providers.tron
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionStatus
@@ -80,27 +82,41 @@ class TrxProvider(
         }
     }
 
-    override suspend fun estimateFee(accountId: String, amount: BigDecimal): BigDecimal {
+    override suspend fun estimateFee(
+        accountId: String,
+        amount: BigDecimal,
+        recipientAddress: String?,
+        feeParams: CustomFeeParams?
+    ): BigDecimal {
         val address = getAddress(accountId)
         val client = createClient()
         try {
+            val requestBody = buildJsonObject {
+                put("address", address)
+                put("visible", true)
+            }
             val response: HttpResponse = client.post("${networkConfig.tronApiBase}/wallet/getaccountresource") {
                 contentType(ContentType.Application.Json)
-                setBody("""{"address":"$address","visible":true}""")
+                setBody(requestBody.toString())
             }
             val body = response.body<String>()
             val json = Json.parseToJsonElement(body).jsonObject
 
+            // Free bandwidth
             val freeNetLimit = json["freeNetLimit"]?.jsonPrimitive?.longOrNull ?: 0L
             val freeNetUsed = json["freeNetUsed"]?.jsonPrimitive?.longOrNull ?: 0L
-            val freeNetRemaining = freeNetLimit - freeNetUsed
+            // Staked bandwidth
+            val netLimit = json["NetLimit"]?.jsonPrimitive?.longOrNull ?: 0L
+            val netUsed = json["NetUsed"]?.jsonPrimitive?.longOrNull ?: 0L
+
+            val totalBandwidthRemaining = (freeNetLimit - freeNetUsed) + (netLimit - netUsed)
 
             val bandwidthNeeded = 300L
-            if (freeNetRemaining >= bandwidthNeeded) {
+            if (totalBandwidthRemaining >= bandwidthNeeded) {
                 return BigDecimal.ZERO
             }
 
-            val shortfall = bandwidthNeeded - freeNetRemaining
+            val shortfall = bandwidthNeeded - totalBandwidthRemaining
             val feeSun = shortfall * 1_000L
             return sunToTrx(BigDecimal.fromLong(feeSun))
         } finally {
@@ -108,7 +124,12 @@ class TrxProvider(
         }
     }
 
-    override suspend fun createTransaction(address: String, amount: BigDecimal, accountId: String): String {
+    override suspend fun createTransaction(
+        address: String,
+        amount: BigDecimal,
+        accountId: String,
+        feeParams: CustomFeeParams?
+    ): String {
         val sunAmount = trxToSun(amount)
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
@@ -147,16 +168,21 @@ class TrxProvider(
         }
     }
 
-    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
-        val broadcastBody = createTransaction(address, amount, accountId)
-
+    override suspend fun broadcast(rawTransaction: String): String {
         val client = createClient()
         try {
-            return broadcastSignedTransaction(client, broadcastBody)
+            return broadcastSignedTransaction(client, rawTransaction)
         } finally {
             client.close()
         }
     }
+
+    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
+        val broadcastBody = createTransaction(address, amount, accountId, null)
+        return broadcast(broadcastBody)
+    }
+
+    override suspend fun feePresets(accountId: String): FeePresets? = null
 
     private suspend fun fetchTransactions(
         address: String,

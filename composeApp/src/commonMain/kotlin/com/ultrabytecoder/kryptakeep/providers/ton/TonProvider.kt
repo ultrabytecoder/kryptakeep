@@ -2,6 +2,8 @@ package com.ultrabytecoder.kryptakeep.providers.ton
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionStatus
@@ -18,7 +20,11 @@ import com.ultrabytecoder.kryptakeep.providers.ton.wallet.WalletContract
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -65,11 +71,94 @@ class TonProvider(
         }
     }
 
-    override suspend fun estimateFee(accountId: String, amount: BigDecimal): BigDecimal {
-        return BigDecimal.fromLong(10_000_000).divide(BigDecimal.fromLong(1_000_000_000))
+    override suspend fun estimateFee(
+        accountId: String,
+        amount: BigDecimal,
+        recipientAddress: String?,
+        feeParams: CustomFeeParams?
+    ): BigDecimal {
+        val nanotons = amount.multiply(BigDecimal.fromLong(networkConfig.tonNanotonsPerTon)).longValue(exactRequired = false)
+        val account = accountRepository.getAccount(accountId)
+            ?: throw IllegalArgumentException("Account not found: $accountId")
+        val keyPair = deriveTonKeyFromPath(account.derivationPath)
+        val version = TonBase.parseWalletVersion(params)
+        val wallet: WalletContract = TonBase.walletContractFor(version, 0, keyPair.publicKey)
+        val destAddress = TonAddress.parse(getAddress(accountId)) // dummy dest, fee is similar for any recipient
+
+        val client = createClient()
+        try {
+            val seqno = tonGetSeqno(client, wallet.address.toString())
+            val transferCell = wallet.createTransfer(
+                seqno = seqno,
+                secretKey = keyPair.privateKeySeed,
+                messages = listOf(internalMessage(to = destAddress, value = nanotons, bounce = false)),
+                sendMode = 3,
+                timeout = null
+            )
+
+            // Build external message BOC (including StateInit if wallet not yet deployed)
+            // to match createTransaction behavior and get accurate fee estimation
+            val extMsgBuilder = beginCell()
+                .storeUint(0b10, 2)
+                .storeAddress(null)
+                .storeAddress(wallet.address)
+                .storeCoins(0)
+
+            if (seqno == 0) {
+                val stateInit = StateInit(code = wallet.code, data = wallet.data)
+                val stateInitCell = beginCell().storeWritable(storeStateInit(stateInit)).endCell()
+                extMsgBuilder.storeBit(true)
+                if (extMsgBuilder.availableBits - 1 >= stateInitCell.bits.length && extMsgBuilder.refsCount + stateInitCell.refs.size <= 3) {
+                    extMsgBuilder.storeBit(false)
+                    extMsgBuilder.storeSlice(stateInitCell.beginParse())
+                } else {
+                    extMsgBuilder.storeBit(true)
+                    extMsgBuilder.storeRef(stateInitCell)
+                }
+            } else {
+                extMsgBuilder.storeBit(false)
+            }
+
+            extMsgBuilder.storeBit(true)
+                .storeRef(transferCell)
+
+            val bodyCell = extMsgBuilder.endCell()
+            val bocBytes = bodyCell.toBoc()
+            val bocBase64 = base64Encode(bocBytes)
+
+            // Use TON API /estimateFee to get accurate fee
+            val feeNanotons = try {
+                val response: HttpResponse = client.post("${networkConfig.tonApiBase}/estimateFee") {
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"boc":"$bocBase64","mode":0}""")
+                }
+                val body = response.body<String>()
+                val json = Json.parseToJsonElement(body).jsonObject
+                json["result"]?.jsonObject
+                    ?.get("in_fwd_fee")?.jsonPrimitive?.longOrNull
+                    ?.let { fwdFee ->
+                        json["result"]?.jsonObject
+                            ?.get("gas_fee")?.jsonPrimitive?.longOrNull
+                            ?.let { gasFee -> gasFee + fwdFee }
+                            ?: fwdFee
+                    }
+                    ?: 10_000_000L
+            } catch (e: Exception) {
+                10_000_000L
+            }
+
+            return BigDecimal.fromLong(feeNanotons).divide(BigDecimal.fromLong(networkConfig.tonNanotonsPerTon))
+        } finally {
+            client.close()
+        }
     }
 
-    override suspend fun createTransaction(address: String, amount: BigDecimal, accountId: String): String {
+    override suspend fun createTransaction(
+        address: String,
+        amount: BigDecimal,
+        accountId: String,
+        feeParams: CustomFeeParams?
+    ): String {
         val nanotons = amount.multiply(BigDecimal.fromLong(networkConfig.tonNanotonsPerTon)).longValue(exactRequired = false)
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
@@ -126,15 +215,21 @@ class TonProvider(
         }
     }
 
-    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
-        val bocBase64 = createTransaction(address, amount, accountId)
+    override suspend fun broadcast(rawTransaction: String): String {
         val client = createClient()
         try {
-            return tonSendBoc(client, bocBase64)
+            return tonSendBoc(client, rawTransaction)
         } finally {
             client.close()
         }
     }
+
+    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
+        val bocBase64 = createTransaction(address, amount, accountId, null)
+        return broadcast(bocBase64)
+    }
+
+    override suspend fun feePresets(accountId: String): FeePresets? = null
 
     private suspend fun fetchTransactions(
         address: String,
