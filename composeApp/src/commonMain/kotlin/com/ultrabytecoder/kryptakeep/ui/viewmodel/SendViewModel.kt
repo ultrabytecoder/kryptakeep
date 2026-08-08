@@ -114,6 +114,19 @@ class SendViewModel(
         viewModelScope.launch {
             _account.value = getAccounts.byId(accountId)
             _account.value?.let { acc ->
+                // BTC accounts no longer expose "Auto" in the UI. If a previously
+                // saved preference is "auto", migrate it to "slow" — Slow maps to
+                // mempool.space hourFee, the exact value Auto used internally, so
+                // behavior is preserved. Non-BTC chains keep Auto.
+                val parentChain = acc.type.parentChain() ?: acc.type
+                if (parentChain is AccountType.Btc && _selectedFeeMode.value is FeeSelectionMode.Auto) {
+                    _selectedFeeMode.value = FeeSelectionMode.Slow
+                    settingsStorage.putString(
+                        FeePreferenceKeys.MODE_PREFIX + accountId,
+                        FeeSelectionMode.Slow.name()
+                    )
+                }
+
                 try {
                     val provider = ProviderFactory.create(
                         acc.type, keyProvider, acc.walletId,
@@ -206,7 +219,15 @@ class SendViewModel(
         val parentChain = accountType.parentChain() ?: accountType
 
         return when (mode) {
-            is FeeSelectionMode.Auto -> null
+            is FeeSelectionMode.Auto -> {
+                // BTC no longer exposes "Auto" in the UI, but a stale saved
+                // preference (or a brief race before init migrates it) could
+                // resolve to Auto. Fall back to the Slow preset, which maps to
+                // mempool.space hourFee — the same value the Auto path used
+                // internally via BtcProvider.fetchFeeRate(). Non-BTC chains
+                // keep returning null so the provider picks fees itself.
+                if (parentChain is AccountType.Btc) presets?.slow else null
+            }
             is FeeSelectionMode.Slow -> presets?.slow
             is FeeSelectionMode.Medium -> presets?.medium
             is FeeSelectionMode.Fast -> presets?.fast

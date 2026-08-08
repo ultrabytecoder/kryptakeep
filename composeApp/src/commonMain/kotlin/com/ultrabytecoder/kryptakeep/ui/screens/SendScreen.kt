@@ -18,7 +18,10 @@ import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.ultrabytecoder.kryptakeep.navigation.Screen
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
+import com.ultrabytecoder.kryptakeep.ui.util.formatFeeChipRate
+import com.ultrabytecoder.kryptakeep.ui.util.formatFeeDetail
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.FeeSelectionMode
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SendViewModel
 
@@ -199,6 +202,23 @@ fun SendScreen(
 
                 if (feeVal != null) {
                     Spacer(modifier = Modifier.height(12.dp))
+
+                    // Build CustomFeeParams from current mode for detail display
+                    val parentChainType = accountVal?.type?.parentChain() ?: accountVal?.type
+                    val activeFeeParams: CustomFeeParams? = when (selectedFeeMode) {
+                        is FeeSelectionMode.Auto -> null
+                        is FeeSelectionMode.Slow -> feePresets?.slow
+                        is FeeSelectionMode.Medium -> feePresets?.medium
+                        is FeeSelectionMode.Fast -> feePresets?.fast
+                        is FeeSelectionMode.Custom -> when (parentChainType) {
+                            is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Btc -> CustomFeeParams.Btc(customBtcFeeRate)
+                            is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Eth -> CustomFeeParams.Eth(customEthPriorityFee, customEthMaxFee)
+                            is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Trx -> CustomFeeParams.Trc20(customTrc20FeeLimit)
+                            else -> null
+                        }
+                    }
+                    val feeDetailLines = formatFeeDetail(activeFeeParams)
+
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
@@ -222,6 +242,18 @@ fun SendScreen(
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer
                                 )
+                            }
+                            if (feeDetailLines != null) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Column {
+                                    feeDetailLines.forEach { line ->
+                                        Text(
+                                            text = line,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
                             }
                             if (total != null) {
                                 HorizontalDivider(
@@ -309,6 +341,12 @@ fun SendScreen(
     }
 }
 
+private data class FeeChipData(
+    val mode: FeeSelectionMode,
+    val label: String,
+    val params: CustomFeeParams?
+)
+
 @Composable
 private fun FeeSelector(
     selectedMode: FeeSelectionMode,
@@ -331,16 +369,24 @@ private fun FeeSelector(
     val isEth = parentChain is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Eth
     val isTrc20 = accountType is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Trc20
 
-    val chips = listOf(
-        FeeSelectionMode.Auto to "Auto",
-        FeeSelectionMode.Slow to "Slow",
-        FeeSelectionMode.Medium to "Medium",
-        FeeSelectionMode.Fast to "Fast",
-        FeeSelectionMode.Custom to "Custom"
+    val chipModes = listOf(
+        FeeChipData(FeeSelectionMode.Auto, "Auto", null),
+        FeeChipData(FeeSelectionMode.Slow, "Slow", feePresets?.slow),
+        FeeChipData(FeeSelectionMode.Medium, "Medium", feePresets?.medium),
+        FeeChipData(FeeSelectionMode.Fast, "Fast", feePresets?.fast),
+        FeeChipData(FeeSelectionMode.Custom, "Custom", null)
     )
 
-    // Hide Custom chip for chains that don't support it
-    val visibleChips = if (isBtc || isEth || isTrc20) chips else chips.take(4)
+    // BTC accounts no longer expose "Auto" — the user always picks
+    // Slow / Medium / Fast / Custom. Other chains keep their existing behavior:
+    //   * BTC            -> Slow, Medium, Fast, Custom   (Auto hidden)
+    //   * ETH / TRC-20   -> Auto, Slow, Medium, Fast, Custom
+    //   * everything else -> Auto, Slow, Medium, Fast    (Custom hidden)
+    val visibleChipModes = when {
+        isBtc -> chipModes.filter { it.mode !is FeeSelectionMode.Auto }
+        isEth || isTrc20 -> chipModes
+        else -> chipModes.take(4)
+    }
 
     Text(
         text = "Fee Selection",
@@ -351,17 +397,34 @@ private fun FeeSelector(
 
     Spacer(modifier = Modifier.height(8.dp))
 
-    Row(
+    FlowRow(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        visibleChips.forEach { (mode, label) ->
-            val isSelected = selectedMode == mode
+        visibleChipModes.forEach { chip ->
+            val isSelected = selectedMode == chip.mode
             FilterChip(
                 selected = isSelected,
-                onClick = { onSelectMode(mode) },
-                label = { Text(label) },
-                modifier = Modifier.weight(1f)
+                onClick = { onSelectMode(chip.mode) },
+                label = {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = chip.label,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        val rateText = formatFeeChipRate(chip.params)
+                        if (rateText != null || chip.mode is FeeSelectionMode.Auto) {
+                            Text(
+                                text = rateText ?: "—",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             )
         }
     }
