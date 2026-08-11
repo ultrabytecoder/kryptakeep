@@ -3,6 +3,7 @@ package com.ultrabytecoder.kryptakeep.providers.ton
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
@@ -76,22 +77,31 @@ class TonProvider(
         amount: BigDecimal,
         recipientAddress: String?,
         feeParams: CustomFeeParams?
-    ): BigDecimal {
+    ): FeeEstimation {
         val nanotons = amount.multiply(BigDecimal.fromLong(networkConfig.tonNanotonsPerTon)).longValue(exactRequired = false)
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
         val keyPair = deriveTonKeyFromPath(account.derivationPath)
         val version = TonBase.parseWalletVersion(params)
         val wallet: WalletContract = TonBase.walletContractFor(version, 0, keyPair.publicKey)
-        val destAddress = TonAddress.parse(getAddress(accountId)) // dummy dest, fee is similar for any recipient
 
         val client = createClient()
         try {
             val seqno = tonGetSeqno(client, wallet.address.toString())
+
+            // Use real recipient address if provided, otherwise fall back to self
+            val destAddress = recipientAddress?.let { TonAddress.parse(it) }
+                ?: TonAddress.parse(getAddress(accountId))
+            // Match createTransaction bounce logic for accurate fee estimation
+            val bounce = recipientAddress?.let { addr ->
+                val destState = tonGetAccountState(client, addr)
+                destState == "active" || destState == "frozen"
+            } ?: false
+
             val transferCell = wallet.createTransfer(
                 seqno = seqno,
                 secretKey = keyPair.privateKeySeed,
-                messages = listOf(internalMessage(to = destAddress, value = nanotons, bounce = false)),
+                messages = listOf(internalMessage(to = destAddress, value = nanotons, bounce = bounce)),
                 sendMode = 3,
                 timeout = null
             )
@@ -147,7 +157,8 @@ class TonProvider(
                 10_000_000L
             }
 
-            return BigDecimal.fromLong(feeNanotons).divide(BigDecimal.fromLong(networkConfig.tonNanotonsPerTon))
+            val totalCost = BigDecimal.fromLong(feeNanotons).divide(BigDecimal.fromLong(networkConfig.tonNanotonsPerTon))
+            return FeeEstimation(totalCost, null)
         } finally {
             client.close()
         }

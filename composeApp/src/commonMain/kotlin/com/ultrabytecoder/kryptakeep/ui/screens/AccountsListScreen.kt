@@ -12,6 +12,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -34,6 +35,7 @@ import androidx.navigation.NavController
 import com.ultrabytecoder.kryptakeep.domain.model.AccountGroup
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
 import com.ultrabytecoder.kryptakeep.domain.model.AccountType
+import com.ultrabytecoder.kryptakeep.ui.theme.AuroraPrimary
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
 import com.ultrabytecoder.kryptakeep.navigation.Screen
@@ -72,6 +74,9 @@ fun AccountsListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                ),
                 title = {
                     Box {
                         Row(
@@ -80,11 +85,15 @@ fun AccountsListScreen(
                                 .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(selectedWallet?.name ?: "Wallet")
+                            Text(
+                                selectedWallet?.name ?: "Wallet",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
                             Icon(
                                 FeatherIcons.ChevronDown,
                                 contentDescription = "Select wallet",
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                         DropdownMenu(
@@ -174,13 +183,15 @@ fun AccountsListScreen(
                             FeatherIcons.Briefcase,
                             contentDescription = null,
                             modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
                             "No accounts yet",
-                            style = MaterialTheme.typography.titleMedium
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             "Add your first account to get started",
                             style = MaterialTheme.typography.bodyMedium,
@@ -228,17 +239,30 @@ private fun AccountGroupItem(
     onParentClick: () -> Unit,
     onTokenClick: (AccountInfo) -> Unit
 ) {
-    val rotation by animateFloatAsState(targetValue = if (isExpanded) 180f else 0f)
-    val backgroundColor = group.parent.type.backgroundColor()
+    val rotation by animateFloatAsState(targetValue = if (isExpanded) 180f else 0f, label = "chevronRotation")
+    
+    val infiniteTransition = rememberInfiniteTransition(label = "syncTransition")
+    val syncAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "syncAlpha"
+    )
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize()
             .clickable { onParentClick() },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = backgroundColor),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column {
             // Parent row
@@ -250,15 +274,15 @@ private fun AccountGroupItem(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(44.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color.White.copy(alpha = 0.2f)),
+                        .background(Color.White.copy(alpha = 0.08f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
                         painter = painterResource(group.parent.type.nativeIcon()),
                         contentDescription = group.parent.name,
-                        modifier = Modifier.size(32.dp),
+                        modifier = Modifier.size(24.dp),
                         contentScale = ContentScale.Fit
                     )
                 }
@@ -269,35 +293,50 @@ private fun AccountGroupItem(
                     Text(
                         text = group.parent.name,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = Color.White
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "${group.parent.amount} ${group.parent.symbol}",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Color.White.copy(alpha = 0.9f)
+                        text = if (group.tokens.isNotEmpty()) "${group.tokens.size} assets" else "Main account",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
-                // Chevron for expand/collapse (only if tokens exist)
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = group.parent.amount,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AuroraPrimary
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = group.parent.symbol,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 if (group.tokens.isNotEmpty()) {
+                    Spacer(modifier = Modifier.width(8.dp))
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(50))
                             .clickable(onClickLabel = if (isExpanded) "Collapse" else "Expand") {
                                 onToggleExpand()
-                            }
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             FeatherIcons.ChevronDown,
                             contentDescription = null,
                             modifier = Modifier
-                                .align(Alignment.Center)
                                 .size(20.dp)
                                 .graphicsLayer { rotationZ = rotation },
-                            tint = Color.White.copy(alpha = 0.8f)
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -312,13 +351,14 @@ private fun AccountGroupItem(
                 Column {
                     group.tokens.forEach { token ->
                         HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(horizontal = 16.dp)
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(start = 72.dp, end = 16.dp) // Aligns exactly with the start of token text
                         )
                         Row(
                             modifier = Modifier
-                                .padding(start = 64.dp, top = 12.dp, end = 16.dp, bottom = 12.dp)
                                 .fillMaxWidth()
+                                .height(56.dp)
+                                .padding(start = 24.dp, end = 16.dp) // 24 + 36 + 12 = 72dp aligns text perfectly
                                 .clickable { onTokenClick(token) },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -326,13 +366,13 @@ private fun AccountGroupItem(
                                 modifier = Modifier
                                     .size(36.dp)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.White.copy(alpha = 0.15f)),
+                                    .background(Color.White.copy(alpha = 0.08f)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Image(
                                     painter = painterResource(token.type.tokenIcon()),
                                     contentDescription = token.symbol,
-                                    modifier = Modifier.size(24.dp),
+                                    modifier = Modifier.size(20.dp),
                                     contentScale = ContentScale.Fit
                                 )
                             }
@@ -340,49 +380,32 @@ private fun AccountGroupItem(
                             Text(
                                 text = token.symbol,
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = Color.White
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(modifier = Modifier.weight(1f))
                             Text(
                                 text = "${token.amount} ${token.symbol}",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = 0.9f)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
             }
 
             // Syncing indicator
             if (isSyncing) {
-                val infiniteTransition = rememberInfiniteTransition()
-                val syncAlpha by infiniteTransition.animateFloat(
-                    initialValue = 0.2f,
-                    targetValue = 1f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(800),
-                        repeatMode = RepeatMode.Reverse
-                    )
-                )
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(3.dp)
-                        .background(Color.White.copy(alpha = syncAlpha))
+                        .height(2.dp)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = syncAlpha * 0.5f))
                 )
             }
         }
     }
-}
-
-private fun AccountType.backgroundColor(): Color = when (this) {
-    is AccountType.Btc -> Color(0xFFF7931A)
-    is AccountType.Eth -> Color(0xFF627EEA)
-    is AccountType.Trx -> Color(0xFFFF0013)
-    is AccountType.Ton -> Color(0xFF0098EA)
-    is AccountType.Erc20 -> Color(0xFF8B9FE8)
-    is AccountType.Trc20 -> Color(0xFFFF4D5A)
-    is AccountType.TonToken -> Color(0xFF0098EA)
 }
 
 private fun AccountType.nativeIcon(): DrawableResource = when (this) {

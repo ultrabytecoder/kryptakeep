@@ -105,7 +105,10 @@ abstract class EthBase(
         }
         val body = response.body<String>()
         val json = Json.parseToJsonElement(body).jsonObject
-        if (json.containsKey("error")) return 0L
+        if (json.containsKey("error")) {
+            val msg = json["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
+            throw IllegalStateException("eth_estimateGas failed: ${msg ?: "unknown error"}")
+        }
         return json["result"]!!.jsonPrimitive.content.removePrefix("0x").toLong(16)
     }
 
@@ -117,12 +120,15 @@ abstract class EthBase(
         return try {
             val gasTipCap = ethMaxPriorityFeePerGas(client)
             val baseFee = ethBaseFee(client)
-            val gasFeeCap = (baseFee * NetworkConfig.ETH_BASE_FEE_MARGIN_NUMERATOR / NetworkConfig.ETH_BASE_FEE_MARGIN_DENOMINATOR) + gasTipCap
+            // Ceiling division to avoid losing precision from integer truncation
+            val marginNum = NetworkConfig.ETH_BASE_FEE_MARGIN_NUMERATOR.toLong()
+            val marginDen = NetworkConfig.ETH_BASE_FEE_MARGIN_DENOMINATOR.toLong()
+            val gasFeeCap = (baseFee * marginNum + marginDen - 1) / marginDen + gasTipCap
             gasTipCap to gasFeeCap
         } catch (e: Exception) {
             // Fallback to legacy eth_gasPrice
             val gasPrice = ethGasPrice(client)
-            val tipCap = minOf(gasPrice / 2, gasPrice)
+            val tipCap = gasPrice / 2
             tipCap to gasPrice
         }
     }

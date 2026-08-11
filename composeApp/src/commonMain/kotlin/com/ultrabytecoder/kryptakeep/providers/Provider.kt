@@ -2,6 +2,7 @@ package com.ultrabytecoder.kryptakeep.providers
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 
 enum class SyncMode { FULL, NORMAL }
@@ -23,6 +24,6 @@ interface Provider {
         amount: BigDecimal,
         recipientAddress: String? = null,
         feeParams: CustomFeeParams? = null
-    ): BigDecimal
+    ): FeeEstimation
     suspend fun feePresets(accountId: String): FeePresets?
 }

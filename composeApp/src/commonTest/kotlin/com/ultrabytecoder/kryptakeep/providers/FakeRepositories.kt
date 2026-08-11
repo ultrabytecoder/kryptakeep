@@ -24,9 +24,14 @@ class FakeAccountRepository(
     private val accounts: Map<String, AccountInfo> = emptyMap()
 ) : AccountRepository {
     override fun getAccountsByWalletFlow(walletId: Long): Flow<List<AccountInfo>> = flowOf(emptyList())
+    override fun getTokensByParentFlow(parentId: String): Flow<List<AccountInfo>> = flowOf(emptyList())
+    override fun getNativeAccountsByWalletFlow(walletId: Long): Flow<List<AccountInfo>> = flowOf(emptyList())
     override suspend fun getAccount(id: String): AccountInfo? = accounts[id]
     override suspend fun getMaxAccountIndexByWalletAndAccountType(walletId: Long, type: String): Long? = null
     override suspend fun existsByDerivationPath(walletId: Long, derivationPath: String): Boolean = false
+    override suspend fun existsTokenForParent(parentId: String, tokenAddress: String): Boolean = false
+    override suspend fun countTokensByParent(parentId: String): Int = 0
+    override suspend fun getNativeAccountsByWalletAndType(walletId: Long, type: String): List<AccountInfo> = emptyList()
     override suspend fun insertAccount(account: AccountInfo) {}
     override suspend fun updateAmount(accountId: String, amount: String) {}
     override suspend fun updateParams(accountId: String, params: String) {}

@@ -44,6 +44,7 @@ import com.ultrabytecoder.kryptakeep.ui.viewmodel.SettingsViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CustomNodesViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupState
+import com.ultrabytecoder.kryptakeep.domain.repository.PinState
 import org.koin.compose.koinInject
 import org.koin.core.qualifier.named
 import com.ultrabytecoder.kryptakeep.domain.usecase.CheckPinStatusUseCase
@@ -118,8 +119,28 @@ fun App() {
             }
             composable<Screen.CreateWallet> {
                 val createWallet: CreateWalletUseCase = koinInject()
+                val checkPinStatus: CheckPinStatusUseCase = koinInject()
                 val viewModel = remember { CreateWalletViewModel(createWallet) }
-                CreateWalletScreen(navController, viewModel)
+                val pinState by checkPinStatus()
+                    .collectAsStateWithLifecycle(initialValue = PinState.Loading)
+
+                CreateWalletScreen(
+                    onWalletCreated = { walletId ->
+                        val ps = pinState
+                        val destination = when (ps) {
+                            is PinState.NotSetup -> Screen.SetupPin
+                            is PinState.Setup -> {
+                                if (ps.isCorrupted) Screen.SetupPin
+                                else Screen.AccountsList(walletId)
+                            }
+                            PinState.Loading -> Screen.AccountsList(walletId)
+                        }
+                        navController.navigate(destination) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    },
+                    viewModel = viewModel
+                )
             }
             composable<Screen.AccountsList> { backStackEntry ->
                 val route = backStackEntry.toRoute<Screen.AccountsList>()

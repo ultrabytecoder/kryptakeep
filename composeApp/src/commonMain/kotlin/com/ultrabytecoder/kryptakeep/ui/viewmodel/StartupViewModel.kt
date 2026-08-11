@@ -11,7 +11,6 @@ import com.ultrabytecoder.kryptakeep.providers.SyncMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 sealed class StartupState {
@@ -28,26 +27,46 @@ class StartupViewModel(
 ) : ViewModel() {
     val walletsFlow: Flow<List<WalletInfo>> = getWallets()
 
+    /**
+     * Startup wizard state — determines which wizard step to show at app launch.
+     *
+     * Wizard flow (linear; each step shown only if its precondition isn't met):
+     *   Step 1: [StartupState.NeedsWallet]    → no wallet exists, navigate to CreateWallet
+     *   Step 2: [StartupState.NeedsPinSetup]  → wallet exists but PIN not set, navigate to SetupPin
+     *   Step 3: [StartupState.NeedsPinUnlock] → wallet + PIN exist, navigate to EnterPin
+     *   Step 4: (handled by EnterPinViewModel) on correct PIN → AccountsList
+     *
+     * PIN setup is decoupled from wallet creation — it's a separate wizard step
+     * that runs only once, regardless of how many wallets the user creates later.
+     */
     val state: StateFlow<StartupState> = combine(
         getWallets(),
         checkPinStatus()
     ) { wallets, pinState ->
-        val w: List<WalletInfo> = wallets
-        val ps: PinState = pinState
-        val walletId = w.firstOrNull()?.id ?: return@combine StartupState.NeedsWallet
+        determineWizardStep(wallets, pinState)
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), StartupState.Loading)
 
-        when (ps) {
+    /**
+     * Pure function that maps (wallets, pinState) → wizard step.
+     */
+    private fun determineWizardStep(
+        wallets: List<WalletInfo>,
+        pinState: PinState
+    ): StartupState {
+        val walletId = wallets.firstOrNull()?.id ?: return StartupState.NeedsWallet
+
+        return when (pinState) {
             PinState.Loading -> StartupState.Loading
             PinState.NotSetup -> StartupState.NeedsPinSetup(walletId)
             is PinState.Setup -> {
-                if (ps.isCorrupted) {
+                if (pinState.isCorrupted) {
                     StartupState.NeedsPinSetup(walletId)
                 } else {
-                    StartupState.NeedsPinUnlock(walletId, ps.isLocked)
+                    StartupState.NeedsPinUnlock(walletId, pinState.isLocked)
                 }
             }
         }
-    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), StartupState.Loading)
+    }
 
     fun fullSync(walletId: Long) {
         syncUseCase(viewModelScope, walletId, SyncMode.FULL)

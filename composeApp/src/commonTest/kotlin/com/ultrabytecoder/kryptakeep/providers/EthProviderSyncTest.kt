@@ -335,9 +335,14 @@ class EthProviderSyncTest {
         val fakeAccountRepo = object : com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository {
             private val accounts = mutableMapOf(ACCOUNT_ID to testAccount())
             override fun getAccountsByWalletFlow(walletId: Long) = kotlinx.coroutines.flow.flowOf(emptyList<AccountInfo>())
+            override fun getTokensByParentFlow(parentId: String) = kotlinx.coroutines.flow.flowOf(emptyList<AccountInfo>())
+            override fun getNativeAccountsByWalletFlow(walletId: Long) = kotlinx.coroutines.flow.flowOf(emptyList<AccountInfo>())
             override suspend fun getAccount(id: String) = accounts[id]
             override suspend fun getMaxAccountIndexByWalletAndAccountType(walletId: Long, type: String): Long? = null
             override suspend fun existsByDerivationPath(walletId: Long, derivationPath: String): Boolean = false
+            override suspend fun existsTokenForParent(parentId: String, tokenAddress: String): Boolean = false
+            override suspend fun countTokensByParent(parentId: String): Int = 0
+            override suspend fun getNativeAccountsByWalletAndType(walletId: Long, type: String): List<AccountInfo> = emptyList()
             override suspend fun insertAccount(account: AccountInfo) {}
             override suspend fun updateAmount(accountId: String, amount: String) {}
             override suspend fun updateParams(accountId: String, params: String) { updatedParams = params }

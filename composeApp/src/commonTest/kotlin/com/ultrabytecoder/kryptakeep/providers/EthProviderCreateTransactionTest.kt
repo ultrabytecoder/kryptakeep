@@ -73,11 +73,14 @@ class EthProviderCreateTransactionTest {
 
     @Test
     fun createTransaction_isDeterministic() = runTest {
-        val provider = createProvider(mockEthFactory(nonce = 5, gasTipCap = 1_000_000_000, baseFee = 5_000_000_000))
         val amount = BigDecimal.fromLong(1).divide(BigDecimal.fromLong(1000))
+        val addr = "0x9858effd232b4033e47d90003d41ec34ecaeda94"
 
-        val result1 = provider.createTransaction("0x9858effd232b4033e47d90003d41ec34ecaeda94", amount, ACCOUNT_ID)
-        val result2 = provider.createTransaction("0x9858effd232b4033e47d90003d41ec34ecaeda94", amount, ACCOUNT_ID)
+        val provider1 = createProvider(mockEthFactory(nonce = 5, gasTipCap = 1_000_000_000, baseFee = 5_000_000_000))
+        val result1 = provider1.createTransaction(addr, amount, ACCOUNT_ID)
+
+        val provider2 = createProvider(mockEthFactory(nonce = 5, gasTipCap = 1_000_000_000, baseFee = 5_000_000_000))
+        val result2 = provider2.createTransaction(addr, amount, ACCOUNT_ID)
 
         assertEquals(result1, result2)
     }
@@ -114,5 +117,16 @@ class EthProviderCreateTransactionTest {
         val result = provider.createTransaction("0x9858effd232b4033e47d90003d41ec34ecaeda94", amount, ACCOUNT_ID)
 
         assertTrue(result.startsWith("0x02"), "EIP-1559 transaction should start with 0x02 type prefix")
+    }
+
+    @Test
+    fun createTransaction_throwsWhenAmountExceedsWeiMax() = runTest {
+        val provider = createProvider()
+        // 10 ETH = 10^19 wei, exceeds Long.MAX_VALUE (9.22 × 10^18)
+        val hugeAmount = BigDecimal.fromLong(10)
+
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            provider.createTransaction("0x9858effd232b4033e47d90003d41ec34ecaeda94", hugeAmount, ACCOUNT_ID)
+        }
     }
 }

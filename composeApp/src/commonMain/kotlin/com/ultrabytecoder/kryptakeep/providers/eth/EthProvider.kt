@@ -3,6 +3,7 @@ package com.ultrabytecoder.kryptakeep.providers
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
@@ -171,7 +172,11 @@ class EthProvider(
         accountId: String,
         feeParams: CustomFeeParams?
     ): String {
-        val weiAmount = amount.multiply(BigDecimal.fromLong(1_000_000_000_000_000_000)).longValue(exactRequired = false)
+        val weiAmountBD = amount.multiply(BigDecimal.fromLong(1_000_000_000_000_000_000))
+        if (weiAmountBD > BigDecimal.fromLong(Long.MAX_VALUE)) {
+            throw IllegalArgumentException("Amount exceeds maximum representable wei value")
+        }
+        val weiAmount = weiAmountBD.longValue(exactRequired = true)
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
         val fromKey = deriveEthKeyFromPath(account.derivationPath)
@@ -212,15 +217,18 @@ class EthProvider(
         amount: BigDecimal,
         recipientAddress: String?,
         feeParams: CustomFeeParams?
-    ): BigDecimal {
+    ): FeeEstimation {
         val fromAddress = getAddress(accountId)
         val toAddress = recipientAddress ?: fromAddress
 
         val client = createClient()
         try {
+            // Compute fee parameters if not provided (Auto mode)
             val (tipCap, feeCap) = when (feeParams) {
                 is CustomFeeParams.Eth -> {
-                    feeParams.maxPriorityFeePerGasGwei * 1_000_000_000L to feeParams.maxFeePerGasGwei * 1_000_000_000L
+                    val priorityFeeGwei = feeParams.maxPriorityFeePerGasGwei
+                    val maxFeeGwei = feeParams.maxFeePerGasGwei
+                    (priorityFeeGwei * 1_000_000_000L) to (maxFeeGwei * 1_000_000_000L)
                 }
                 else -> computeFeeParams(client)
             }
@@ -234,7 +242,23 @@ class EthProvider(
             }
 
             val feeWei = BigDecimal.fromLong(feeCap).multiply(BigDecimal.fromLong(gasLimit))
-            return feeWei.divide(BigDecimal.fromLong(1_000_000_000_000_000_000))
+            val totalCost = feeWei.divide(BigDecimal.fromLong(1_000_000_000_000_000_000))
+
+            val appliedParams = when (feeParams) {
+                is CustomFeeParams.Eth -> CustomFeeParams.Eth(
+                    feeParams.maxPriorityFeePerGasGwei,
+                    feeParams.maxFeePerGasGwei,
+                    feeParams.gasLimit
+                )
+                else -> {
+                    // Auto mode: reconstruct params from the values fetched via computeFeeParams
+                    val tipGwei = (tipCap / 1_000_000_000).coerceAtLeast(1L)
+                    val capGwei = (feeCap / 1_000_000_000).coerceAtLeast(tipGwei + 1L)
+                    CustomFeeParams.Eth(tipGwei, capGwei)
+                }
+            }
+
+            return FeeEstimation(totalCost, appliedParams)
         } finally {
             client.close()
         }

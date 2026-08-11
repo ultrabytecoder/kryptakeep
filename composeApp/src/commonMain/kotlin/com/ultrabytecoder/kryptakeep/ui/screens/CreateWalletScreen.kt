@@ -15,18 +15,16 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import fr.acinq.bitcoin.MnemonicCode
 import org.kotlincrypto.random.CryptoRand
-import androidx.navigation.NavController
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
-import com.ultrabytecoder.kryptakeep.navigation.Screen
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CreateWalletViewModel
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateWalletScreen(
-    navController: NavController,
+    onWalletCreated: (walletId: Long) -> Unit,
     viewModel: CreateWalletViewModel
 ) {
     var walletName by remember { mutableStateOf("") }
@@ -226,9 +224,7 @@ fun CreateWalletScreen(
                             passphrase = effectivePassphrase
                         )) {
                             is CreateWalletViewModel.Result.Success -> {
-                                navController.navigate(Screen.SetupPin) {
-                                    popUpTo(0) { inclusive = true }
-                                }
+                                onWalletCreated(result.walletId)
                             }
                             is CreateWalletViewModel.Result.Error -> {
                                 mnemonicError = result.message

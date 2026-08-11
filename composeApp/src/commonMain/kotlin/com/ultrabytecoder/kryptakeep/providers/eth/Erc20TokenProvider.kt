@@ -3,6 +3,7 @@ package com.ultrabytecoder.kryptakeep.providers
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
@@ -224,7 +225,7 @@ class Erc20TokenProvider(
         amount: BigDecimal,
         recipientAddress: String?,
         feeParams: CustomFeeParams?
-    ): BigDecimal {
+    ): FeeEstimation {
         val fromAddress = getAddress(accountId)
         val toAddress = recipientAddress ?: fromAddress
 
@@ -260,7 +261,22 @@ class Erc20TokenProvider(
             }
 
             val feeWei = BigDecimal.fromLong(feeCap).multiply(BigDecimal.fromLong(gasLimit))
-            return feeWei.divide(BigDecimal.fromLong(1_000_000_000_000_000_000))
+            val totalCost = feeWei.divide(BigDecimal.fromLong(1_000_000_000_000_000_000))
+
+            val appliedParams = when (feeParams) {
+                is CustomFeeParams.Eth -> CustomFeeParams.Eth(
+                    feeParams.maxPriorityFeePerGasGwei,
+                    feeParams.maxFeePerGasGwei,
+                    feeParams.gasLimit
+                )
+                else -> {
+                    val tipGwei = (tipCap / 1_000_000_000).coerceAtLeast(1L)
+                    val capGwei = (feeCap / 1_000_000_000).coerceAtLeast(tipGwei + 1L)
+                    CustomFeeParams.Eth(tipGwei, capGwei)
+                }
+            }
+
+            return FeeEstimation(totalCost, appliedParams)
         } finally {
             client.close()
         }

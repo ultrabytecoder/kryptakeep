@@ -2,6 +2,7 @@ package com.ultrabytecoder.kryptakeep.domain.usecase
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
@@ -21,7 +22,7 @@ class EstimateFeeUseCase(
         amount: BigDecimal,
         recipientAddress: String? = null,
         feeParams: CustomFeeParams? = null
-    ): BigDecimal {
+    ): FeeEstimation {
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
 

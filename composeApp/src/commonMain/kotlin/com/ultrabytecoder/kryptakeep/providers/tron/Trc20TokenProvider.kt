@@ -3,6 +3,7 @@ package com.ultrabytecoder.kryptakeep.providers.tron
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
@@ -87,7 +88,7 @@ class Trc20TokenProvider(
         amount: BigDecimal,
         recipientAddress: String?,
         feeParams: CustomFeeParams?
-    ): BigDecimal {
+    ): FeeEstimation {
         val feeLimit = when (feeParams) {
             is CustomFeeParams.Trc20 -> feeParams.feeLimitSun
             else -> networkConfig.trc20FeeLimit
@@ -110,12 +111,20 @@ class Trc20TokenProvider(
 
             // Extract actual energy used from the simulation
             val energyUsed = triggerJson["energy_used"]?.jsonPrimitive?.longOrNull
-            if (energyUsed != null && energyUsed > 0) {
+            val totalCost: BigDecimal = if (energyUsed != null && energyUsed > 0) {
                 // energy_used is in energy units; 1 energy = 1 SUN of TRX fee
-                return sunToTrx(BigDecimal.fromLong(energyUsed))
+                sunToTrx(BigDecimal.fromLong(energyUsed))
+            } else {
+                // Fallback to a reasonable estimate if simulation fails
+                BigDecimal.fromLong(20_000_000).divide(BigDecimal.fromLong(1_000_000))
             }
-            // Fallback to a reasonable estimate if simulation fails
-            return BigDecimal.fromLong(20_000_000).divide(BigDecimal.fromLong(1_000_000))
+
+            val appliedParams = when (feeParams) {
+                is CustomFeeParams.Trc20 -> CustomFeeParams.Trc20(feeLimit)
+                else -> null
+            }
+
+            return FeeEstimation(totalCost, appliedParams)
         } finally {
             client.close()
         }

@@ -1,7 +1,9 @@
 package com.ultrabytecoder.kryptakeep.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -18,7 +20,9 @@ import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.ultrabytecoder.kryptakeep.navigation.Screen
+import com.ultrabytecoder.kryptakeep.ui.theme.AuroraPrimary
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.ui.util.formatFeeChipRate
 import com.ultrabytecoder.kryptakeep.ui.util.formatFeeDetail
@@ -58,7 +62,7 @@ fun SendScreen(
 
     val supportsFeeSelection = viewModel.supportsFeeSelection()
 
-    LaunchedEffect(amount, selectedFeeMode, btcFeeText, ethPriorityText, ethMaxFeeText, trc20FeeText) {
+    LaunchedEffect(amount, address, selectedFeeMode, btcFeeText, ethPriorityText, ethMaxFeeText, trc20FeeText) {
         if (amount.isNotBlank()) {
             try {
                 val parsed = BigDecimal.parseString(amount)
@@ -88,8 +92,11 @@ fun SendScreen(
 
     val feeVal = fee
     val feeErrVal = feeError
-    val total = if (parsedAmount != null && feeVal != null) {
-        parsedAmount.add(feeVal)
+    // For token accounts (TRC20/ERC20), fee is in the native chain currency,
+    // so adding amount + fee produces a meaningless number.
+    val isTokenAccount = accountVal?.type?.isToken == true
+    val total = if (!isTokenAccount && parsedAmount != null && feeVal?.totalCost != null) {
+        parsedAmount.add(feeVal.totalCost)
     } else null
 
     Scaffold(
@@ -121,9 +128,12 @@ fun SendScreen(
             ) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
@@ -135,7 +145,8 @@ fun SendScreen(
                         )
                         Text(
                             text = accountVal!!.amount,
-                            style = MaterialTheme.typography.headlineSmall
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = AuroraPrimary
                         )
                     }
                 }
@@ -152,7 +163,8 @@ fun SendScreen(
                         label = { Text("Recipient Address") },
                         placeholder = { Text("Enter or paste address") },
                         modifier = Modifier.weight(1f),
-                        singleLine = true
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(
@@ -176,7 +188,8 @@ fun SendScreen(
                     placeholder = { Text("0.00") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(16.dp)
                 )
 
                 // Fee selection section
@@ -203,27 +216,17 @@ fun SendScreen(
                 if (feeVal != null) {
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Build CustomFeeParams from current mode for detail display
-                    val parentChainType = accountVal?.type?.parentChain() ?: accountVal?.type
-                    val activeFeeParams: CustomFeeParams? = when (selectedFeeMode) {
-                        is FeeSelectionMode.Auto -> null
-                        is FeeSelectionMode.Slow -> feePresets?.slow
-                        is FeeSelectionMode.Medium -> feePresets?.medium
-                        is FeeSelectionMode.Fast -> feePresets?.fast
-                        is FeeSelectionMode.Custom -> when (parentChainType) {
-                            is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Btc -> CustomFeeParams.Btc(customBtcFeeRate)
-                            is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Eth -> CustomFeeParams.Eth(customEthPriorityFee, customEthMaxFee)
-                            is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Trx -> CustomFeeParams.Trc20(customTrc20FeeLimit)
-                            else -> null
-                        }
-                    }
-                    val feeDetailLines = formatFeeDetail(activeFeeParams)
+                    // Use the params actually applied by the provider (e.g. from Auto mode RPC query)
+                    val feeDetailLines = formatFeeDetail(feeVal.appliedParams)
 
                     Card(
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp),
+                        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer
-                        )
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                     ) {
                         Column(
                             modifier = Modifier.padding(12.dp)
@@ -238,7 +241,7 @@ fun SendScreen(
                                     color = MaterialTheme.colorScheme.onSecondaryContainer
                                 )
                                 Text(
-                                    text = feeVal.toPlainString(),
+                                    text = feeVal?.totalCost?.toPlainString() ?: "",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer
                                 )
@@ -291,7 +294,11 @@ fun SendScreen(
             }
 
             // Send button pinned at bottom
-            PaddingValues(16.dp).let { pv ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
                 Button(
                     onClick = {
                         if (address.isNotBlank() && amount.isNotBlank()) {
@@ -323,8 +330,7 @@ fun SendScreen(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
-                        .padding(pv),
+                        .height(56.dp),
                     enabled = !isLoading
                 ) {
                     if (isLoading) {
@@ -367,7 +373,7 @@ private fun FeeSelector(
     val parentChain = accountType.parentChain() ?: accountType
     val isBtc = parentChain is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Btc
     val isEth = parentChain is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Eth
-    val isTrc20 = accountType is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Trc20
+    val isTrx = parentChain is com.ultrabytecoder.kryptakeep.domain.model.AccountType.Trx
 
     val chipModes = listOf(
         FeeChipData(FeeSelectionMode.Auto, "Auto", null),
@@ -377,15 +383,15 @@ private fun FeeSelector(
         FeeChipData(FeeSelectionMode.Custom, "Custom", null)
     )
 
-    // BTC accounts no longer expose "Auto" — the user always picks
-    // Slow / Medium / Fast / Custom. Other chains keep their existing behavior:
+    // Fee selection visibility per chain:
     //   * BTC            -> Slow, Medium, Fast, Custom   (Auto hidden)
-    //   * ETH / TRC-20   -> Auto, Slow, Medium, Fast, Custom
-    //   * everything else -> Auto, Slow, Medium, Fast    (Custom hidden)
+    //   * ETH / TRC20   -> Auto, Slow, Medium, Fast, Custom
+    //   * TON and others -> Auto only (presets unavailable)
+    val hasPresets = feePresets != null
     val visibleChipModes = when {
         isBtc -> chipModes.filter { it.mode !is FeeSelectionMode.Auto }
-        isEth || isTrc20 -> chipModes
-        else -> chipModes.take(4)
+        isEth || (isTrx && hasPresets) -> chipModes
+        else -> listOf(chipModes[0]) // Auto only
     }
 
     Text(
@@ -444,7 +450,8 @@ private fun FeeSelector(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     isError = validationError != null,
-                    supportingText = validationError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } }
+                    supportingText = validationError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                    shape = RoundedCornerShape(16.dp)
                 )
             }
             isEth -> {
@@ -457,7 +464,8 @@ private fun FeeSelector(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     isError = validationError != null,
-                    supportingText = validationError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } }
+                    supportingText = validationError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                    shape = RoundedCornerShape(16.dp)
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
@@ -468,12 +476,14 @@ private fun FeeSelector(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = validationError != null
+                    isError = validationError != null,
+                    shape = RoundedCornerShape(16.dp)
                 )
             }
-            isTrc20 -> {
+            isTrx -> {
                 val feeLimitSun = customTrc20FeeText.toLongOrNull() ?: 0L
-                val feeTrx = feeLimitSun / 1_000_000.0
+                val feeTrxWhole = feeLimitSun / 1_000_000
+                val feeTrxFrac = (feeLimitSun % 1_000_000).toString().padStart(6, '0')
                 OutlinedTextField(
                     value = customTrc20FeeText,
                     onValueChange = onTrc20FeeTextChange,
@@ -485,10 +495,11 @@ private fun FeeSelector(
                     isError = validationError != null,
                     supportingText = {
                         Text(
-                            text = "~${BigDecimal.parseString(feeTrx.toString()).toPlainString()} TRX",
+                            text = "~${feeTrxWhole}.${feeTrxFrac} TRX",
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    }
+                    },
+                    shape = RoundedCornerShape(16.dp)
                 )
             }
         }

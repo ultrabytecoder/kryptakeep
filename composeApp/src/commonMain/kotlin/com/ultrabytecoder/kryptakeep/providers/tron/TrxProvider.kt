@@ -3,6 +3,7 @@ package com.ultrabytecoder.kryptakeep.providers.tron
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
@@ -87,7 +88,7 @@ class TrxProvider(
         amount: BigDecimal,
         recipientAddress: String?,
         feeParams: CustomFeeParams?
-    ): BigDecimal {
+    ): FeeEstimation {
         val address = getAddress(accountId)
         val client = createClient()
         try {
@@ -111,14 +112,22 @@ class TrxProvider(
 
             val totalBandwidthRemaining = (freeNetLimit - freeNetUsed) + (netLimit - netUsed)
 
-            val bandwidthNeeded = 300L
-            if (totalBandwidthRemaining >= bandwidthNeeded) {
-                return BigDecimal.ZERO
+            // TRX transfer transaction size is ~268 bytes
+            val bandwidthNeeded = 268L
+            val feeIsZero = totalBandwidthRemaining >= bandwidthNeeded
+            val appliedParams: CustomFeeParams? = null
+
+            val totalCost: BigDecimal = if (feeIsZero) {
+                BigDecimal.ZERO
+            } else {
+                val shortfall = bandwidthNeeded - totalBandwidthRemaining
+                // 1 bandwidth unit costs 1000 SUN (10^-3 TRX)
+                val SUN_PER_BANDWIDTH = 1_000L
+                val feeSun = shortfall * SUN_PER_BANDWIDTH
+                sunToTrx(BigDecimal.fromLong(feeSun))
             }
 
-            val shortfall = bandwidthNeeded - totalBandwidthRemaining
-            val feeSun = shortfall * 1_000L
-            return sunToTrx(BigDecimal.fromLong(feeSun))
+            return FeeEstimation(totalCost, appliedParams)
         } finally {
             client.close()
         }

@@ -34,6 +34,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
@@ -68,9 +69,20 @@ class BtcProvider(
         private const val P2WPKH_INPUT_BASE_SIZE = 41L  // outpoint(36) + scriptSig varint(1) + sequence(4)
         private const val P2WPKH_OUTPUT_SIZE = 31L      // 8(value) + 1(len) + 22(script)
         private const val P2WPKH_WITNESS_SIZE = 108L    // 1(count) + (1+72 sig) + (1+33 pubkey)
+
+        // Minimum non-dust output for P2WPKH (3 * relay fee rate * output size)
+        private const val DUST_THRESHOLD_SAT = 294L
+
+        // Max BTC amount that fits in Long satoshi representation
+        private val MAX_BTC_AMOUNT = BigDecimal.fromLong(Long.MAX_VALUE).divide(BigDecimal.fromLong(100_000_000))
     }
 
-    private fun varIntSize(n: Int): Long = if (n < 253) 1L else 3L
+    private fun varIntSize(n: Int): Long = when {
+        n < 253 -> 1L
+        n <= 65535 -> 3L
+        n <= 0xFFFFFFFF -> 5L
+        else -> 9L
+    }
 
     private fun estimateVSize(numInputs: Int, numOutputs: Int): Long {
         var nonWitness = 0L
@@ -453,7 +465,10 @@ class BtcProvider(
     accountId: String,
     feeParams: CustomFeeParams? = null
 ): Triple<String, List<Long>, Boolean> {
-        val destAmountSat = amount.multiply(BigDecimal.fromLong(100_000_000)).longValue(exactRequired = false)
+        if (amount > MAX_BTC_AMOUNT) {
+            throw IllegalArgumentException("Amount exceeds maximum representable BTC value")
+        }
+        val destAmountSat = amount.multiply(BigDecimal.fromLong(100_000_000)).longValue(exactRequired = true)
 
         val allUtxos = utxoRepository.getUtxosByAccount(accountId)
         check(allUtxos.isNotEmpty()) { "No UTXOs found for account $accountId" }
@@ -494,7 +509,7 @@ class BtcProvider(
         val txOuts = mutableListOf(
             TxOut(destAmountSat.toSatoshi(), destScript)
         )
-        if (changeAmount > 0) {
+        if (changeAmount >= DUST_THRESHOLD_SAT) {
             txOuts.add(TxOut(changeAmount.toSatoshi(), changeScript))
         }
 
@@ -533,20 +548,26 @@ class BtcProvider(
         amount: BigDecimal,
         recipientAddress: String?,
         feeParams: CustomFeeParams?
-    ): BigDecimal {
-        val destAmountSat = amount.multiply(BigDecimal.fromLong(100_000_000)).longValue(exactRequired = false)
+    ): FeeEstimation {
+        if (amount > MAX_BTC_AMOUNT) {
+            throw IllegalArgumentException("Amount exceeds maximum representable BTC value")
+        }
+        val destAmountSat = amount.multiply(BigDecimal.fromLong(100_000_000)).longValue(exactRequired = true)
         val allUtxos = utxoRepository.getUtxosByAccount(accountId)
         if (allUtxos.isEmpty()) {
-            return BigDecimal.ZERO
+            throw IllegalStateException("No UTXOs available for fee estimation")
         }
         val feeRate = when (feeParams) {
             is CustomFeeParams.Btc -> feeParams.feeRateSatVb
             else -> fetchFeeRate()
         }
         val selected = selectInputs(destAmountSat, feeRate, allUtxos)
-        val numInputs = selected?.size ?: allUtxos.size
-        val feeSat = estimateVSize(numInputs, 2) * feeRate
-        return BigDecimal.fromLong(feeSat).divide(BigDecimal.fromLong(100_000_000))
+        if (selected == null) {
+            throw IllegalStateException("Insufficient funds for transaction")
+        }
+        val feeSat = estimateVSize(selected.size, 2) * feeRate
+        val totalCost = BigDecimal.fromLong(feeSat).divide(BigDecimal.fromLong(100_000_000))
+        return FeeEstimation(totalCost, CustomFeeParams.Btc(feeRate))
     }
 
     override suspend fun createTransaction(

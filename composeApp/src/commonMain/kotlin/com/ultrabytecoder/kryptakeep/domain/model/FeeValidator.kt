@@ -8,6 +8,15 @@ object FeeValidator {
     fun validateEthMaxFee(maxFeeGwei: Long): Boolean = maxFeeGwei in 1L..10_000L
     fun validateEthPriorityFee(priorityFeeGwei: Long): Boolean = priorityFeeGwei in 1L..1_000L
 
+    /**
+     * Validate ETH fee params together — EIP-1559 requires maxFee >= priorityFee.
+     */
+    fun validateEthFeeParams(priorityFeeGwei: Long, maxFeeGwei: Long): Boolean {
+        return validateEthPriorityFee(priorityFeeGwei) &&
+            validateEthMaxFee(maxFeeGwei) &&
+            maxFeeGwei >= priorityFeeGwei
+    }
+
     // TRC-20: 1..100 TRX (1_000_000..100_000_000 SUN)
     fun validateTrc20FeeLimit(feeLimitSun: Long): Boolean = feeLimitSun in 1_000_000L..100_000_000L
 }

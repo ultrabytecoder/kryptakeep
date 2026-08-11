@@ -8,6 +8,7 @@ import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
 import com.ultrabytecoder.kryptakeep.domain.model.AccountType
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.FeeValidator
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
@@ -74,8 +75,8 @@ class SendViewModel(
     private val _account = MutableStateFlow<AccountInfo?>(null)
     val account: StateFlow<AccountInfo?> = _account.asStateFlow()
 
-    private val _fee = MutableStateFlow<BigDecimal?>(null)
-    val fee: StateFlow<BigDecimal?> = _fee.asStateFlow()
+    private val _fee = MutableStateFlow<FeeEstimation?>(null)
+    val fee: StateFlow<FeeEstimation?> = _fee.asStateFlow()
 
     private val _feeError = MutableStateFlow<String?>(null)
     val feeError: StateFlow<String?> = _feeError.asStateFlow()
@@ -169,15 +170,14 @@ class SendViewModel(
             is AccountType.Eth -> {
                 val p = _customEthPriorityFee.value
                 val m = _customEthMaxFee.value
-                val pOk = FeeValidator.validateEthPriorityFee(p)
-                val mOk = FeeValidator.validateEthMaxFee(m)
-                if (pOk && mOk) {
+                if (FeeValidator.validateEthFeeParams(p, m)) {
                     _validationError.value = null
                     true
                 } else {
                     val parts = mutableListOf<String>()
-                    if (!pOk) parts.add("priority fee: 1–1000 Gwei")
-                    if (!mOk) parts.add("max fee: 1–10000 Gwei")
+                    if (!FeeValidator.validateEthPriorityFee(p)) parts.add("priority fee: 1–1000 Gwei")
+                    if (!FeeValidator.validateEthMaxFee(m)) parts.add("max fee: 1–10000 Gwei")
+                    if (m < p) parts.add("max fee must be >= priority fee")
                     _validationError.value = "Valid ranges — " + parts.joinToString(", ")
                     false
                 }
@@ -222,12 +222,12 @@ class SendViewModel(
         }
     }
 
-    /** Returns true if this account type supports custom fee selection. */
+    /** Returns true if this account type supports fee selection. */
     fun supportsFeeSelection(): Boolean {
         val accountType = _account.value?.type ?: return false
         val parentChain = accountType.parentChain() ?: accountType
         return parentChain is AccountType.Btc || parentChain is AccountType.Eth ||
-            (parentChain is AccountType.Trx && accountType is AccountType.Trc20)
+            parentChain is AccountType.Trx || parentChain is AccountType.Ton
     }
 
     fun estimateFee(amount: BigDecimal, recipientAddress: String? = null) {
@@ -237,7 +237,10 @@ class SendViewModel(
                 _fee.value = estimateFeeUseCase(accountId, amount, recipientAddress, buildFeeParams())
             } catch (e: IllegalArgumentException) {
                 _fee.value = null
-                _feeError.value = null
+                _feeError.value = "Fee estimation failed: ${e.message ?: "invalid parameter"}"
+            } catch (e: IllegalStateException) {
+                _fee.value = null
+                _feeError.value = e.message ?: "Fee estimation failed"
             } catch (e: Exception) {
                 _fee.value = null
                 _feeError.value = "Fee estimation failed: ${e.message ?: "network error"}"
@@ -251,6 +254,9 @@ class SendViewModel(
     }
 
     suspend fun sendTransaction(address: String, amount: BigDecimal): String {
+        if (_selectedFeeMode.value is FeeSelectionMode.Custom && !validateCustomFee()) {
+            throw IllegalStateException("Invalid custom fee: ${_validationError.value}")
+        }
         val txid = send(accountId, address, amount, buildFeeParams())
         viewModelScope.launch { syncAccount(accountId) }
         return txid
