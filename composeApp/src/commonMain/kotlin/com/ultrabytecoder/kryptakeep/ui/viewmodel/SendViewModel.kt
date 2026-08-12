@@ -53,10 +53,10 @@ sealed class FeeSelectionMode {
 
 private object FeePreferenceKeys {
     const val MODE_PREFIX = "fee_mode_"
-    const val BTC_RATE = "fee_custom_btc_rate"
-    const val ETH_PRIORITY = "fee_custom_eth_priority"
-    const val ETH_MAX = "fee_custom_eth_max"
-    const val TRC20_LIMIT = "fee_custom_trc20_limit"
+    const val BTC_RATE_PREFIX = "fee_custom_btc_rate_"     // Append accountId
+    const val ETH_PRIORITY_PREFIX = "fee_custom_eth_priority_"
+    const val ETH_MAX_PREFIX = "fee_custom_eth_max_"
+    const val TRC20_LIMIT_PREFIX = "fee_custom_trc20_limit_"
 }
 
 class SendViewModel(
@@ -107,10 +107,10 @@ class SendViewModel(
         // Load saved fee preferences
         val savedMode = settingsStorage.getString(FeePreferenceKeys.MODE_PREFIX + accountId)
         _selectedFeeMode.value = FeeSelectionMode.fromName(savedMode ?: "auto")
-        _customBtcFeeRate.value = (settingsStorage.getString(FeePreferenceKeys.BTC_RATE) ?: "10").toLongOrNull() ?: 10L
-        _customEthPriorityFee.value = (settingsStorage.getString(FeePreferenceKeys.ETH_PRIORITY) ?: "25").toLongOrNull() ?: 25L
-        _customEthMaxFee.value = (settingsStorage.getString(FeePreferenceKeys.ETH_MAX) ?: "35").toLongOrNull() ?: 35L
-        _customTrc20FeeLimit.value = (settingsStorage.getString(FeePreferenceKeys.TRC20_LIMIT) ?: "35000000").toLongOrNull() ?: 35_000_000L
+        _customBtcFeeRate.value = (settingsStorage.getString(FeePreferenceKeys.BTC_RATE_PREFIX + accountId) ?: "10").toLongOrNull() ?: 10L
+        _customEthPriorityFee.value = (settingsStorage.getString(FeePreferenceKeys.ETH_PRIORITY_PREFIX + accountId) ?: "25").toLongOrNull() ?: 25L
+        _customEthMaxFee.value = (settingsStorage.getString(FeePreferenceKeys.ETH_MAX_PREFIX + accountId) ?: "35").toLongOrNull() ?: 35L
+        _customTrc20FeeLimit.value = (settingsStorage.getString(FeePreferenceKeys.TRC20_LIMIT_PREFIX + accountId) ?: "35000000").toLongOrNull() ?: 35_000_000L
 
         viewModelScope.launch {
             _account.value = getAccounts.byId(accountId)
@@ -137,19 +137,19 @@ class SendViewModel(
 
     fun setCustomBtcFeeRate(rate: Long) {
         _customBtcFeeRate.value = rate
-        settingsStorage.putString(FeePreferenceKeys.BTC_RATE, rate.toString())
+        settingsStorage.putString(FeePreferenceKeys.BTC_RATE_PREFIX + accountId, rate.toString())
     }
 
     fun setCustomEthFees(priorityFee: Long, maxFee: Long) {
         _customEthPriorityFee.value = priorityFee
         _customEthMaxFee.value = maxFee
-        settingsStorage.putString(FeePreferenceKeys.ETH_PRIORITY, priorityFee.toString())
-        settingsStorage.putString(FeePreferenceKeys.ETH_MAX, maxFee.toString())
+        settingsStorage.putString(FeePreferenceKeys.ETH_PRIORITY_PREFIX + accountId, priorityFee.toString())
+        settingsStorage.putString(FeePreferenceKeys.ETH_MAX_PREFIX + accountId, maxFee.toString())
     }
 
     fun setCustomTrc20FeeLimit(limit: Long) {
         _customTrc20FeeLimit.value = limit
-        settingsStorage.putString(FeePreferenceKeys.TRC20_LIMIT, limit.toString())
+        settingsStorage.putString(FeePreferenceKeys.TRC20_LIMIT_PREFIX + accountId, limit.toString())
     }
 
     fun validateCustomFee(): Boolean {
@@ -226,8 +226,9 @@ class SendViewModel(
     fun supportsFeeSelection(): Boolean {
         val accountType = _account.value?.type ?: return false
         val parentChain = accountType.parentChain() ?: accountType
-        return parentChain is AccountType.Btc || parentChain is AccountType.Eth ||
-            parentChain is AccountType.Trx || parentChain is AccountType.Ton
+        return parentChain is AccountType.Btc || 
+               parentChain is AccountType.Eth || 
+               parentChain is AccountType.Trx 
     }
 
     fun estimateFee(amount: BigDecimal, recipientAddress: String? = null) {

@@ -17,16 +17,38 @@ class EstimateFeeUseCase(
     private val keyProvider: KeyProvider,
     private val networkConfig: NetworkConfig
 ) {
+    // Simple in-memory cache to prevent API spam when user is typing amounts
+    private var cachedEstimation: FeeEstimation? = null
+    private var cacheKey: String? = null
+    private var cacheTimestamp: Long = 0L
+    private val cacheTtl = 30_000L // 30 seconds
+
     suspend operator fun invoke(
         accountId: String,
         amount: BigDecimal,
         recipientAddress: String? = null,
         feeParams: CustomFeeParams? = null
     ): FeeEstimation {
+        val key = "$accountId|$amount|$recipientAddress|${feeParams?.hashCode()}"
+        val now = Clock.System.now().toEpochMilliseconds()
+        
+        // Return cached result if key matches and within TTL
+        if (key == cacheKey && now - cacheTimestamp < cacheTtl) {
+            return cachedEstimation ?: throw IllegalStateException("Cache invalid")
+        }
+
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
 
         val provider = ProviderFactory.create(account.type, keyProvider, account.walletId, utxoRepository, accountRepository, transactionRepository, networkConfig, account.params)
-        return provider.estimateFee(account.id, amount, recipientAddress, feeParams)
+        
+        val estimation = provider.estimateFee(account.id, amount, recipientAddress, feeParams)
+        
+        // Update cache with new result
+        cachedEstimation = estimation
+        cacheKey = key
+        cacheTimestamp = now
+        
+        return estimation
     }
 }

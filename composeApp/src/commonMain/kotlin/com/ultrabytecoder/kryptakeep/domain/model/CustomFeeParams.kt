@@ -5,13 +5,21 @@ package com.ultrabytecoder.kryptakeep.domain.model
  * [Default] means the provider picks fees automatically.
  */
 sealed class CustomFeeParams {
-    data class Btc(val feeRateSatVb: Long) : CustomFeeParams()
+    abstract val chain: AccountType // Add this to enforce validation
+
+    data class Btc(val feeRateSatVb: Long) : CustomFeeParams() {
+        override val chain = AccountType.Btc
+    }
     data class Eth(
         val maxPriorityFeePerGasGwei: Long,
         val maxFeePerGasGwei: Long,
         val gasLimit: Long? = null
-    ) : CustomFeeParams()
-    data class Trc20(val feeLimitSun: Long) : CustomFeeParams()
+    ) : CustomFeeParams() {
+        override val chain = AccountType.Eth
+    }
+    data class Trc20(val feeLimitSun: Long) : CustomFeeParams() {
+        override val chain = AccountType.Trx
+    }
 }
 
 /**

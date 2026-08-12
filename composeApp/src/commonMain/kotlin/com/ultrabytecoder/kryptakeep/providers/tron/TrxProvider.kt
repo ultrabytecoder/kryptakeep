@@ -145,11 +145,24 @@ class TrxProvider(
         val fromKey = deriveTrxKeyFromPath(account.derivationPath)
         val fromAddress = getAddress(accountId)
 
+        // Validate feeParams type for TRC20 custom fees
+        if (feeParams != null && feeParams !is CustomFeeParams.Trc20) {
+            throw IllegalArgumentException("TRX provider received ${feeParams::class.simpleName}")
+        }
+
         val client = createClient()
         try {
+            val feeLimitSun = (feeParams as? CustomFeeParams.Trc20)?.feeLimitSun ?: 0L
+
+            val requestBody = if (feeLimitSun > 0) {
+                """{"to_address":"$address","owner_address":"$fromAddress","amount":$sunAmount,"fee_limit":$feeLimitSun,"visible":true}"""
+            } else {
+                """{"to_address":"$address","owner_address":"$fromAddress","amount":$sunAmount,"visible":true}"""
+            }
+
             val createResponse: HttpResponse = client.post("${networkConfig.tronApiBase}/wallet/createtransaction") {
                 contentType(ContentType.Application.Json)
-                setBody("""{"to_address":"$address","owner_address":"$fromAddress","amount":$sunAmount,"visible":true}""")
+                setBody(requestBody)
             }
             val createBody = createResponse.body<String>()
             val createJson = Json.parseToJsonElement(createBody).jsonObject
@@ -186,8 +199,8 @@ class TrxProvider(
         }
     }
 
-    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
-        val broadcastBody = createTransaction(address, amount, accountId, null)
+    override suspend fun send(address: String, amount: BigDecimal, accountId: String, feeParams: CustomFeeParams?): String {
+        val broadcastBody = createTransaction(address, amount, accountId, feeParams)
         return broadcast(broadcastBody)
     }
 

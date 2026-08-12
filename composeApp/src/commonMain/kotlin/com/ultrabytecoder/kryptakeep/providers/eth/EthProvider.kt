@@ -182,9 +182,14 @@ class EthProvider(
         val fromKey = deriveEthKeyFromPath(account.derivationPath)
         val fromAddress = ethAddressFromPublicKey(fromKey)
 
-        val client = createClient()
+            val client = createClient()
         try {
             val nonce = ethGetTransactionCount(client, fromAddress)
+
+            // Validate feeParams type
+            if (feeParams != null && feeParams !is CustomFeeParams.Eth) {
+                throw IllegalArgumentException("ETH provider received ${feeParams::class.simpleName}")
+            }
 
             val (gasTipCap, gasFeeCap) = when (feeParams) {
                 is CustomFeeParams.Eth -> {
@@ -193,15 +198,9 @@ class EthProvider(
                 else -> computeFeeParams(client)
             }
 
-            val gasLimit = when (feeParams) {
-                is CustomFeeParams.Eth -> feeParams.gasLimit ?: run {
-                    val estimatedGas = ethEstimateGas(client, fromAddress, address, "0x", gasFeeCap, gasTipCap)
-                    if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethGasLimit
-                }
-                else -> {
-                    val estimatedGas = ethEstimateGas(client, fromAddress, address, "0x", gasFeeCap, gasTipCap)
-                    if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethGasLimit
-                }
+            val gasLimit = (feeParams as? CustomFeeParams.Eth)?.gasLimit ?: run {
+                val estimatedGas = ethEstimateGas(client, fromAddress, address, "0x", gasFeeCap, gasTipCap)
+                if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkconfig.ethGasLimit
             }
 
             return signEip1559Transaction(
@@ -219,7 +218,9 @@ class EthProvider(
         feeParams: CustomFeeParams?
     ): FeeEstimation {
         val fromAddress = getAddress(accountId)
-        val toAddress = recipientAddress ?: fromAddress
+
+        // Require real recipient for accurate contract gas estimation (not self-transfer)
+        val toAddress = recipientAddress ?: throw IllegalArgumentException("Recipient address is required for accurate ETH fee estimation")
 
         val client = createClient()
         try {
@@ -233,12 +234,10 @@ class EthProvider(
                 else -> computeFeeParams(client)
             }
 
-            val estimatedGas = ethEstimateGas(client, fromAddress, toAddress, "0x", feeCap, tipCap)
-            val gasLimit = when (feeParams) {
-                is CustomFeeParams.Eth -> feeParams.gasLimit ?: run {
-                    if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethGasLimit
-                }
-                else -> if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethGasLimit
+            // Skip ethEstimateGas if user provided gasLimit
+            val gasLimit = (feeParams as? CustomFeeParams.Eth)?.gasLimit ?: run {
+                val estimatedGas = ethEstimateGas(client, fromAddress, toAddress, "0x", feeCap, tipCap)
+                if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethGasLimit
             }
 
             val feeWei = BigDecimal.fromLong(feeCap).multiply(BigDecimal.fromLong(gasLimit))

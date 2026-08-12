@@ -102,41 +102,14 @@ class TonProvider(
                 seqno = seqno,
                 secretKey = keyPair.privateKeySeed,
                 messages = listOf(internalMessage(to = destAddress, value = nanotons, bounce = bounce)),
-                sendMode = 3,
+                sendMode = 1,
                 timeout = null
             )
 
             // Build external message BOC (including StateInit if wallet not yet deployed)
-            // to match createTransaction behavior and get accurate fee estimation
-            val extMsgBuilder = beginCell()
-                .storeUint(0b10, 2)
-                .storeAddress(null)
-                .storeAddress(wallet.address)
-                .storeCoins(0)
+            val bocBase64 = buildExtMessageBoc(wallet, seqno, transferCell)
 
-            if (seqno == 0) {
-                val stateInit = StateInit(code = wallet.code, data = wallet.data)
-                val stateInitCell = beginCell().storeWritable(storeStateInit(stateInit)).endCell()
-                extMsgBuilder.storeBit(true)
-                if (extMsgBuilder.availableBits - 1 >= stateInitCell.bits.length && extMsgBuilder.refsCount + stateInitCell.refs.size <= 3) {
-                    extMsgBuilder.storeBit(false)
-                    extMsgBuilder.storeSlice(stateInitCell.beginParse())
-                } else {
-                    extMsgBuilder.storeBit(true)
-                    extMsgBuilder.storeRef(stateInitCell)
-                }
-            } else {
-                extMsgBuilder.storeBit(false)
-            }
-
-            extMsgBuilder.storeBit(true)
-                .storeRef(transferCell)
-
-            val bodyCell = extMsgBuilder.endCell()
-            val bocBytes = bodyCell.toBoc()
-            val bocBase64 = base64Encode(bocBytes)
-
-            // Use TON API /estimateFee to get accurate fee
+            // Use TON API /estimateFee to get accurate fee - sum all 4 fee components
             val feeNanotons = try {
                 val response: HttpResponse = client.post("${networkConfig.tonApiBase}/estimateFee") {
                     contentType(ContentType.Application.Json)
@@ -144,15 +117,12 @@ class TonProvider(
                 }
                 val body = response.body<String>()
                 val json = Json.parseToJsonElement(body).jsonObject
-                json["result"]?.jsonObject
-                    ?.get("in_fwd_fee")?.jsonPrimitive?.longOrNull
-                    ?.let { fwdFee ->
-                        json["result"]?.jsonObject
-                            ?.get("gas_fee")?.jsonPrimitive?.longOrNull
-                            ?.let { gasFee -> gasFee + fwdFee }
-                            ?: fwdFee
-                    }
-                    ?: 10_000_000L
+                val fees = json["result"]?.jsonObject
+                
+                // Sum all 4 fee components: in_fwd_fee, storage_fee, gas_fee, fwd_fee
+                listOf("in_fwd_fee", "storage_fee", "gas_fee", "fwd_fee")
+                    .sumOf { fees?.get(it)?.jsonPrimitive?.longOrNull ?: 0L }
+                    .takeIf { it > 0L } ?: 10_000_000L
             } catch (e: Exception) {
                 10_000_000L
             }
@@ -162,6 +132,37 @@ class TonProvider(
         } finally {
             client.close()
         }
+    }
+
+    /** Extract BOC construction to prevent logic divergence between estimateFee and createTransaction */
+    private fun buildExtMessageBoc(
+        wallet: WalletContract,
+        seqno: Long,
+        transferCell: Cell
+    ): String {
+        val extMsgBuilder = beginCell()
+            .storeUint(0b10, 2)
+            .storeAddress(null)
+            .storeAddress(wallet.address)
+            .storeCoins(0)
+
+        if (seqno == 0) {
+            val stateInit = StateInit(code = wallet.code, data = wallet.data)
+            val stateInitCell = beginCell().storeWritable(storeStateInit(stateInit)).endCell()
+            extMsgBuilder.storeBit(true)
+            if (extMsgBuilder.availableBits - 1 >= stateInitCell.bits.length && extMsgBuilder.refsCount + stateInitCell.refs.size <= 3) {
+                extMsgBuilder.storeBit(false)
+                extMsgBuilder.storeSlice(stateInitCell.beginParse())
+            } else {
+                extMsgBuilder.storeBit(true)
+                extMsgBuilder.storeRef(stateInitCell)
+            }
+        } else {
+            extMsgBuilder.storeBit(false)
+        }
+
+        extMsgBuilder.storeBit(true).storeRef(transferCell)
+        return base64Encode(extMsgBuilder.endCell().toBoc())
     }
 
     override suspend fun createTransaction(
@@ -188,39 +189,12 @@ class TonProvider(
                 seqno = seqno,
                 secretKey = keyPair.privateKeySeed,
                 messages = listOf(internalMessage(to = destAddress, value = nanotons, bounce = bounce)),
-                sendMode = 3,
+                sendMode = 1,
                 timeout = null
             )
 
-            val extMsgBuilder = beginCell()
-                .storeUint(0b10, 2)        // ext_in_msg_info$10
-                .storeAddress(null)         // src: addr_none
-                .storeAddress(wallet.address) // dest: wallet address
-                .storeCoins(0)              // import_fee
-
-            // Include StateInit when wallet is not yet deployed (seqno == 0)
-            if (seqno == 0) {
-                val stateInit = StateInit(code = wallet.code, data = wallet.data)
-                val stateInitCell = beginCell().storeWritable(storeStateInit(stateInit)).endCell()
-                extMsgBuilder.storeBit(true)  // has init
-                if (extMsgBuilder.availableBits - 1 >= stateInitCell.bits.length && extMsgBuilder.refsCount + stateInitCell.refs.size <= 3) {
-                    extMsgBuilder.storeBit(false)
-                    extMsgBuilder.storeSlice(stateInitCell.beginParse())
-                } else {
-                    extMsgBuilder.storeBit(true)
-                    extMsgBuilder.storeRef(stateInitCell)
-                }
-            } else {
-                extMsgBuilder.storeBit(false) // no state init
-            }
-
-            extMsgBuilder.storeBit(true)  // body as ref
-                .storeRef(transferCell)
-
-            val bodyCell = extMsgBuilder.endCell()
-
-            val bocBytes = bodyCell.toBoc()
-            return base64Encode(bocBytes)
+            val bocBase64 = buildExtMessageBoc(wallet, seqno, transferCell)
+            return bocBase64
         } finally {
             client.close()
         }
@@ -235,8 +209,9 @@ class TonProvider(
         }
     }
 
-    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
-        val bocBase64 = createTransaction(address, amount, accountId, null)
+    override suspend fun send(address: String, amount: BigDecimal, accountId: String, feeParams: CustomFeeParams?): String {
+        // feeParams is ignored for TON, but must match interface
+        val bocBase64 = createTransaction(address, amount, accountId, feeParams)
         return broadcast(bocBase64)
     }
 

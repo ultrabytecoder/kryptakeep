@@ -444,13 +444,27 @@ class BtcProvider(
         for (utxo in sorted) {
             selected.add(utxo)
             sum += utxo.amount
-            // Calculate fee dynamically as inputs grow
-            val estimatedFee = estimateVSize(selected.size, 2) * feeRate
-            if (sum >= requiredAmount + estimatedFee) {
+            
+            // Calculate potential change to determine numOutputs
+            val estimatedFeeMax = estimateVSize(selected.size, 2) * feeRate
+            val tempChange = sum - requiredAmount - estimatedFeeMax
+
+            val numOutputs = if (tempChange >= DUST_THRESHOLD_SAT) 2 else 1
+            val estimatedFeeActual = estimateVSize(selected.size, numOutputs) * feeRate
+            
+            if (sum >= requiredAmount + estimatedFeeActual) {
                 return selected
             }
         }
         return null
+    }
+
+    private fun resolveBtcFeeRate(feeParams: CustomFeeParams?): Long {
+        return when (feeParams) {
+            null -> fetchFeeRate()
+            is CustomFeeParams.Btc -> feeParams.feeRateSatVb
+            else -> throw IllegalArgumentException("BTC provider received ${feeParams::class.simpleName}")
+        }
     }
 
     override suspend fun balance(accountId: String): BigDecimal {
@@ -460,11 +474,11 @@ class BtcProvider(
     }
 
     private suspend fun buildSignedTransaction(
-    address: String,
-    amount: BigDecimal,
-    accountId: String,
-    feeParams: CustomFeeParams? = null
-): Triple<String, List<Long>, Boolean> {
+        address: String,
+        amount: BigDecimal,
+        accountId: String,
+        feeParams: CustomFeeParams? = null
+    ): Triple<String, List<Long>, Boolean> {
         if (amount > MAX_BTC_AMOUNT) {
             throw IllegalArgumentException("Amount exceeds maximum representable BTC value")
         }
@@ -473,19 +487,21 @@ class BtcProvider(
         val allUtxos = utxoRepository.getUtxosByAccount(accountId)
         check(allUtxos.isNotEmpty()) { "No UTXOs found for account $accountId" }
 
-        val feeRate = when (feeParams) {
-            is CustomFeeParams.Btc -> feeParams.feeRateSatVb
-            else -> fetchFeeRate()
-        }
+        val feeRate = resolveBtcFeeRate(feeParams)
         val selectedUtxos = selectInputs(destAmountSat, feeRate, allUtxos)
             ?: throw IllegalStateException("Not enough funds - have ${allUtxos.sumOf { it.amount }} sat but need $destAmountSat sat")
 
-        val fee = estimateVSize(selectedUtxos.size, 2) * feeRate
+        // Calculate numOutputs based on potential change
+        val estimatedFeeMax = estimateVSize(selectedUtxos.size, 2) * feeRate
+        val tempChange = selectedUtxos.sumOf { it.amount } - destAmountSat - estimatedFeeMax
+        val numOutputs = if (tempChange >= DUST_THRESHOLD_SAT) 2 else 1
+        val feeSat = estimateVSize(selectedUtxos.size, numOutputs) * feeRate
+        
         val inputsSum = selectedUtxos.sumOf { it.amount }
-        val changeAmount = inputsSum - destAmountSat - fee
+        val changeAmount = inputsSum - destAmountSat - feeSat
 
         if (changeAmount < 0) {
-            throw IllegalStateException("Not enough funds to cover amount + fee (fee=$fee sat)")
+            throw IllegalStateException("Not enough funds to cover amount + fee (fee=$feeSat sat)")
         }
 
         val txIns = selectedUtxos.map { utxo ->
@@ -557,16 +573,18 @@ class BtcProvider(
         if (allUtxos.isEmpty()) {
             throw IllegalStateException("No UTXOs available for fee estimation")
         }
-        val feeRate = when (feeParams) {
-            is CustomFeeParams.Btc -> feeParams.feeRateSatVb
-            else -> fetchFeeRate()
-        }
+        val feeRate = resolveBtcFeeRate(feeParams)
         val selected = selectInputs(destAmountSat, feeRate, allUtxos)
         if (selected == null) {
             throw IllegalStateException("Insufficient funds for transaction")
         }
-        val feeSat = estimateVSize(selected.size, 2) * feeRate
+        // Calculate numOutputs based on potential change
+        val estimatedFeeMax = estimateVSize(selected.size, 2) * feeRate
+        val tempChange = selected.sumOf { it.amount } - destAmountSat - estimatedFeeMax
+        val numOutputs = if (tempChange >= DUST_THRESHOLD_SAT) 2 else 1
+        val feeSat = estimateVSize(selected.size, numOutputs) * feeRate
         val totalCost = BigDecimal.fromLong(feeSat).divide(BigDecimal.fromLong(100_000_000))
+        
         return FeeEstimation(totalCost, CustomFeeParams.Btc(feeRate))
     }
 
@@ -598,8 +616,8 @@ class BtcProvider(
         }
     }
 
-    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
-        val (txHex, spentUtxoIds, hasChange) = buildSignedTransaction(address, amount, accountId, null)
+    override suspend fun send(address: String, amount: BigDecimal, accountId: String, feeParams: CustomFeeParams?): String {
+        val (txHex, spentUtxoIds, hasChange) = buildSignedTransaction(address, amount, accountId, feeParams)
 
         val txid = broadcast(txHex)
 
