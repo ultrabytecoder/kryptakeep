@@ -9,6 +9,7 @@ import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
 import com.ultrabytecoder.kryptakeep.domain.service.KeyProvider
 import com.ultrabytecoder.kryptakeep.providers.ProviderFactory
+import kotlin.time.Clock
 
 class EstimateFeeUseCase(
     private val accountRepository: AccountRepository,
@@ -40,9 +41,13 @@ class EstimateFeeUseCase(
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
 
-        val provider = ProviderFactory.create(account.type, keyProvider, account.walletId, utxoRepository, accountRepository, transactionRepository, networkConfig, account.params)
-        
-        val estimation = provider.estimateFee(account.id, amount, recipientAddress, feeParams)
+        val estimation = keyProvider.withMasterSeed(account.walletId) { masterSeed ->
+            val provider = ProviderFactory.create(
+                account.type, masterSeed, utxoRepository, accountRepository,
+                transactionRepository, networkConfig, account.params
+            )
+            provider.estimateFee(account.id, amount, recipientAddress, feeParams)
+        }
         
         // Update cache with new result
         cachedEstimation = estimation

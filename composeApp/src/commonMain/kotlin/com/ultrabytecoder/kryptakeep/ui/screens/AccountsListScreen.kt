@@ -67,6 +67,7 @@ fun AccountsListScreen(
     val accountGroups by viewModel.accountGroups.collectAsStateWithLifecycle(initialValue = null)
     val syncingAccounts by viewModel.syncingAccounts.collectAsStateWithLifecycle(initialValue = emptySet())
     val expandedAccountIds by viewModel.expandedAccountIds.collectAsStateWithLifecycle(initialValue = emptySet())
+    val fiatBalances by viewModel.fiatBalances.collectAsStateWithLifecycle(initialValue = emptyMap())
     val selectedWallet = wallets.find { it.id == selectedWalletId }
 
     var walletSelectorExpanded by remember { mutableStateOf(false) }
@@ -94,6 +95,13 @@ fun AccountsListScreen(
                                 FeatherIcons.ChevronDown,
                                 contentDescription = "Select wallet",
                                 modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                "Accounts",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         DropdownMenu(
@@ -215,6 +223,7 @@ fun AccountsListScreen(
                             group = group,
                             isExpanded = group.parent.id in expandedAccountIds,
                             isSyncing = group.parent.id in syncingAccounts,
+                            fiatBalances = fiatBalances,
                             onToggleExpand = { viewModel.toggleExpanded(group.parent.id) },
                             onParentClick = {
                                 navController.navigate(Screen.AccountDetails(group.parent.id))
@@ -235,6 +244,7 @@ private fun AccountGroupItem(
     group: AccountGroup,
     isExpanded: Boolean,
     isSyncing: Boolean,
+    fiatBalances: Map<String, String>,
     onToggleExpand: () -> Unit,
     onParentClick: () -> Unit,
     onTokenClick: (AccountInfo) -> Unit
@@ -304,19 +314,23 @@ private fun AccountGroupItem(
                     )
                 }
 
-                Column(horizontalAlignment = Alignment.End) {
+                Column(
+                    horizontalAlignment = Alignment.End
+                ) {
                     Text(
-                        text = group.parent.amount,
+                        text = "${group.parent.amount} ${group.parent.symbol}",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = AuroraPrimary
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = group.parent.symbol,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    fiatBalances[group.parent.id]?.let { parentFiatBalance ->
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = parentFiatBalance,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
                 if (group.tokens.isNotEmpty()) {
@@ -384,11 +398,23 @@ private fun AccountGroupItem(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(modifier = Modifier.weight(1f))
-                            Text(
-                                text = "${token.amount} ${token.symbol}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Column(
+                                horizontalAlignment = Alignment.End
+                            ) {
+                                Text(
+                                    text = "${token.amount} ${token.symbol}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                fiatBalances[token.id]?.let { tokenFiatBalance ->
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = tokenFiatBalance,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))

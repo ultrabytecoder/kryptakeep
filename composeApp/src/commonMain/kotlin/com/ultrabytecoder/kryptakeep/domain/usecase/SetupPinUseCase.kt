@@ -5,7 +5,7 @@ import com.ultrabytecoder.kryptakeep.domain.repository.PinRepository
 class SetupPinUseCase(
     private val pinRepository: PinRepository
 ) {
-    suspend operator fun invoke(pin: String) {
+    suspend operator fun invoke(pin: CharArray) {
         pinRepository.setupPin(pin)
     }
 }

@@ -10,13 +10,13 @@ import platform.CommonCrypto.kCCSuccess
 
 actual object Pbkdf2 {
     actual fun derive(
-        password: String,
+        password: ByteArray,
         salt: ByteArray,
         iterations: Int,
         derivedKeyLengthBytes: Int
     ): ByteArray {
         val derivedKey = ByteArray(derivedKeyLengthBytes)
-        val passwordBytes = password.encodeToByteArray()
+        val passwordBytes = password
 
         derivedKey.usePinned { derivedKeyPinned ->
             passwordBytes.usePinned { passwordPinned ->

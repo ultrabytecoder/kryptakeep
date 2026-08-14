@@ -5,13 +5,13 @@ import javax.crypto.spec.SecretKeySpec
 
 actual object Pbkdf2 {
     actual fun derive(
-        password: String,
+        password: ByteArray,
         salt: ByteArray,
         iterations: Int,
         derivedKeyLengthBytes: Int
     ): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(password.encodeToByteArray(), "HmacSHA256"))
+        mac.init(SecretKeySpec(password, "HmacSHA256"))
 
         val hashLength = 32
         val blocksNeeded = (derivedKeyLengthBytes + hashLength - 1) / hashLength

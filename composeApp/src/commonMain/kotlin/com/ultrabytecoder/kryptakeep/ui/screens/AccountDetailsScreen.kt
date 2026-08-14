@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -49,6 +50,7 @@ fun AccountDetailsScreen(
     val hasMore by viewModel.hasMore.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val selectedFiatBalance by viewModel.selectedFiatBalance.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -81,6 +83,7 @@ fun AccountDetailsScreen(
                 BalanceSection(
                     assets = allAssets,
                     selectedAccount = selected,
+                    fiatBalance = selectedFiatBalance,
                     onSelect = { viewModel.selectAccount(it) }
                 )
             }
@@ -164,6 +167,7 @@ fun AccountDetailsScreen(
 private fun BalanceSection(
     assets: List<AccountInfo>,
     selectedAccount: AccountInfo,
+    fiatBalance: String?,
     onSelect: (AccountInfo) -> Unit
 ) {
     Card(
@@ -204,12 +208,26 @@ private fun BalanceSection(
             }
 
             // Selected balance
-            Text(
-                text = "${selectedAccount.amount} ${selectedAccount.symbol}",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = AuroraPrimary
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${selectedAccount.amount} ${selectedAccount.symbol}",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = AuroraPrimary,
+                    modifier = Modifier.weight(1f)
+                )
+                if (fiatBalance != null) {
+                    Text(
+                        text = fiatBalance,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.End
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(4.dp))
 

@@ -196,9 +196,12 @@ class Erc20TokenProvider(
 
             val (gasTipCap, gasFeeCap) = when (feeParams) {
                 is CustomFeeParams.Eth -> {
-                    feeParams.maxPriorityFeePerGasGwei * 1_000_000_000L to feeParams.maxFeePerGasGwei * 1_000_000_000L
+                    feeParams.maxPriorityFeePerGasMilliGwei * 1_000_000L to feeParams.maxFeePerGasMilliGwei * 1_000_000L
                 }
-                else -> computeFeeParams(client)
+                else -> {
+                    val computed = computeFeeParams(client)
+                    computed.tipCap to computed.feeCap
+                }
             }
 
             val gasLimit = when (feeParams) {
@@ -245,11 +248,18 @@ class Erc20TokenProvider(
 
         val client = createClient()
         try {
+            var usedFallbackFees = false
             val (tipCap, feeCap) = when (feeParams) {
                 is CustomFeeParams.Eth -> {
-                    feeParams.maxPriorityFeePerGasGwei * 1_000_000_000L to feeParams.maxFeePerGasGwei * 1_000_000_000L
+                    val priorityFeeWei = feeParams.maxPriorityFeePerGasMilliGwei * 1_000_000L
+                    val maxFeeWei = feeParams.maxFeePerGasMilliGwei * 1_000_000L
+                    priorityFeeWei to maxFeeWei
                 }
-                else -> computeFeeParams(client)
+                else -> {
+                    val computed = computeFeeParams(client)
+                    usedFallbackFees = computed.usedFallback
+                    computed.tipCap to computed.feeCap
+                }
             }
 
             val estimatedGas = ethEstimateGas(client, fromAddress, contractAddress, dataHex, feeCap, tipCap)
@@ -265,18 +275,18 @@ class Erc20TokenProvider(
 
             val appliedParams = when (feeParams) {
                 is CustomFeeParams.Eth -> CustomFeeParams.Eth(
-                    feeParams.maxPriorityFeePerGasGwei,
-                    feeParams.maxFeePerGasGwei,
+                    feeParams.maxPriorityFeePerGasMilliGwei,
+                    feeParams.maxFeePerGasMilliGwei,
                     feeParams.gasLimit
                 )
                 else -> {
-                    val tipGwei = (tipCap / 1_000_000_000).coerceAtLeast(1L)
-                    val capGwei = (feeCap / 1_000_000_000).coerceAtLeast(tipGwei + 1L)
-                    CustomFeeParams.Eth(tipGwei, capGwei)
+                    val tipMGwei = tipCap.weiToMilliGwei().coerceAtLeast(1L)
+                    val capMGwei = feeCap.weiToMilliGwei().coerceAtLeast(tipMGwei + 1L)
+                    CustomFeeParams.Eth(tipMGwei, capMGwei)
                 }
             }
 
-            return FeeEstimation(totalCost, appliedParams)
+            return FeeEstimation(totalCost, appliedParams, usedFallbackFees)
         } finally {
             client.close()
         }
@@ -299,26 +309,14 @@ class Erc20TokenProvider(
     override suspend fun feePresets(accountId: String): FeePresets {
         val client = createClient()
         try {
-            val (tipCap, feeCap) = computeFeeParams(client)
-            val tipGwei = (tipCap / 1_000_000_000).coerceAtLeast(1L)
-            val capGwei = (feeCap / 1_000_000_000).coerceAtLeast(tipGwei + 1L)
-
-            val slowTip = (tipGwei * 70 / 100).coerceAtLeast(1L)
-            val slowCap = (capGwei * 85 / 100).coerceAtLeast(slowTip + 1L)
-
-            val fastTip = (tipGwei * 150 / 100).coerceAtLeast(tipGwei + 1L)
-            val fastCap = (capGwei * 150 / 100).coerceAtLeast(fastTip + 1L)
-
-            return FeePresets(
-                slow = CustomFeeParams.Eth(slowTip, slowCap),
-                medium = CustomFeeParams.Eth(tipGwei, capGwei),
-                fast = CustomFeeParams.Eth(fastTip, fastCap)
-            )
+            val computed = computeFeeParams(client)
+            return computeFeePresets(computed.tipCap, computed.feeCap)
         } catch (_: Exception) {
             return FeePresets(
-                slow = CustomFeeParams.Eth(15L, 20L),
-                medium = CustomFeeParams.Eth(25L, 35L),
-                fast = CustomFeeParams.Eth(40L, 60L)
+                auto = CustomFeeParams.Eth(25_000L, 35_000L),
+                slow = CustomFeeParams.Eth(15_000L, 20_000L),
+                medium = CustomFeeParams.Eth(25_000L, 35_000L),
+                fast = CustomFeeParams.Eth(40_000L, 60_000L)
             )
         } finally {
             client.close()

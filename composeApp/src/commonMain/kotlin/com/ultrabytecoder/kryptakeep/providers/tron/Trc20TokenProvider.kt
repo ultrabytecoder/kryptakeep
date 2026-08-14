@@ -45,6 +45,18 @@ class Trc20TokenProvider(
     private val contractAddress: String = params["tokenAddress"]?.jsonPrimitive?.content
         ?: throw IllegalArgumentException("Missing tokenAddress in params")
 
+    private var energyCacheAccountId: String? = null
+    private var energyCacheValue: Long? = null
+    private var energyCacheTime: Long = 0L
+    private var decimalsCache: Int? = null
+
+    private companion object {
+        const val ENERGY_CACHE_TTL_MS = 5 * 60 * 1000L
+        const val MIN_FEE_LIMIT_SUN = 1_000_000L
+        const val MAX_FEE_LIMIT_SUN = 100_000_000L
+        const val DEFAULT_ENERGY_ESTIMATE = 20_000_000L
+    }
+
     override suspend fun getAddress(accountId: String): String {
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
@@ -53,9 +65,13 @@ class Trc20TokenProvider(
     }
 
     override suspend fun sync(accountId: String, syncMode: SyncMode) {
-        val rawBalance = balance(accountId)
-        val normalized = rawBalance.toPlainString()
-        accountRepository.updateAmount(accountId, normalized)
+        try {
+            val rawBalance = balance(accountId)
+            val normalized = rawBalance.toPlainString()
+            accountRepository.updateAmount(accountId, normalized)
+        } catch (_: Exception) {
+            // Balance RPC failed; preserve existing amount and continue with transaction sync
+        }
 
         val address = getAddress(accountId)
         val transactions = fetchTransactions(address, accountId, syncMode)
@@ -72,9 +88,9 @@ class Trc20TokenProvider(
                 client, contractAddress,
                 "balanceOf(address)", addressHex, address
             )
-            val rawBalanceHex = resultJson["constant_result"]?.jsonArray?.get(0)?.jsonPrimitive?.content
+            val rawBalanceHex = resultJson["constant_result"]?.jsonArray?.getOrNull(0)?.jsonPrimitive?.content
+            val rawBalance = rawBalanceHex?.toLongOrNull(16)
                 ?: throw IllegalStateException("TRON RPC missing constant_result in balanceOf response")
-            val rawBalance = rawBalanceHex.toLong(16)
             val decimals = fetchDecimalsWithClient(client, accountId)
             return BigDecimal.Companion.fromLong(rawBalance)
                 .divide(BigDecimal.Companion.fromLong(10).pow(decimals))
@@ -90,7 +106,7 @@ class Trc20TokenProvider(
         feeParams: CustomFeeParams?
     ): FeeEstimation {
         val feeLimit = when (feeParams) {
-            is CustomFeeParams.Trc20 -> feeParams.feeLimitSun
+            is CustomFeeParams.Tron -> feeParams.feeLimitSun
             else -> networkConfig.trc20FeeLimit
         }
         val decimals = fetchDecimals(accountId)
@@ -119,10 +135,10 @@ class Trc20TokenProvider(
                 BigDecimal.fromLong(20_000_000).divide(BigDecimal.fromLong(1_000_000))
             }
 
-            val appliedParams = when (feeParams) {
-                is CustomFeeParams.Trc20 -> CustomFeeParams.Trc20(feeLimit)
-                else -> null
-            }
+            // Always report the actual fee limit used — in Auto mode this is the
+            // network-config default, so the UI shows the live/effective value
+            // instead of a stale custom one.
+            val appliedParams = CustomFeeParams.Tron(feeLimit)
 
             return FeeEstimation(totalCost, appliedParams)
         } finally {
@@ -137,7 +153,7 @@ class Trc20TokenProvider(
         feeParams: CustomFeeParams?
     ): String {
         val feeLimit = when (feeParams) {
-            is CustomFeeParams.Trc20 -> feeParams.feeLimitSun
+            is CustomFeeParams.Tron -> feeParams.feeLimitSun
             else -> networkConfig.trc20FeeLimit
         }
         val decimals = fetchDecimals(accountId)
@@ -199,11 +215,48 @@ class Trc20TokenProvider(
     }
 
     override suspend fun feePresets(accountId: String): FeePresets {
+        val estimatedEnergy = estimateEnergyForTransfer(accountId)
+        // fee_limit is a cap on energy burn, not a speed bid — presets are
+        // safety margins over the simulated energy_used.
+        val slow = (estimatedEnergy * 110 / 100).coerceIn(MIN_FEE_LIMIT_SUN, MAX_FEE_LIMIT_SUN)
+        val medium = (estimatedEnergy * 130 / 100).coerceIn(MIN_FEE_LIMIT_SUN, MAX_FEE_LIMIT_SUN)
+        val fast = (estimatedEnergy * 150 / 100).coerceIn(MIN_FEE_LIMIT_SUN, MAX_FEE_LIMIT_SUN)
+        val auto = networkConfig.trc20FeeLimit // the value estimateFee() uses in Auto mode
         return FeePresets(
-            slow = CustomFeeParams.Trc20(20_000_000L),
-            medium = CustomFeeParams.Trc20(35_000_000L),
-            fast = CustomFeeParams.Trc20(50_000_000L)
+            auto = CustomFeeParams.Tron(auto),
+            slow = CustomFeeParams.Tron(slow),
+            medium = CustomFeeParams.Tron(medium),
+            fast = CustomFeeParams.Tron(fast)
         )
+    }
+
+    private suspend fun estimateEnergyForTransfer(accountId: String): Long {
+        val now = System.currentTimeMillis()
+        if (energyCacheAccountId == accountId && energyCacheValue != null && now - energyCacheTime < ENERGY_CACHE_TTL_MS) {
+            return energyCacheValue!!
+        }
+
+        val decimals = fetchDecimals(accountId)
+        val zeroAddress = ByteArray(32)
+        val amountHex = "0".padStart(64, '0')
+        val parameter = zeroAddress.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') } + amountHex
+        val fromAddress = getAddress(accountId)
+        val client = createClient()
+        try {
+            val triggerJson = tronTriggerSmartContract(
+                client, contractAddress,
+                "transfer(address,uint256)", parameter, fromAddress,
+                feeLimit = networkConfig.trc20FeeLimit
+            )
+            val energyUsed = triggerJson["energy_used"]?.jsonPrimitive?.longOrNull
+                ?: DEFAULT_ENERGY_ESTIMATE
+            energyCacheAccountId = accountId
+            energyCacheValue = energyUsed
+            energyCacheTime = now
+            return energyUsed
+        } finally {
+            client.close()
+        }
     }
 
     private suspend fun fetchTransactions(
@@ -298,13 +351,46 @@ class Trc20TokenProvider(
     }
 
     private suspend fun fetchDecimalsWithClient(client: HttpClient, accountId: String): Int {
+        decimalsCache?.let { return it }
+
         val ownerAddress = getAddress(accountId)
         val resultJson = tronTriggerSmartContract(
             client, contractAddress,
             "decimals()", "", ownerAddress
         )
-        val resultHex = resultJson["constant_result"]?.jsonArray?.get(0)?.jsonPrimitive?.content
-            ?: throw IllegalStateException("TRON RPC missing constant_result in decimals response")
-        return resultHex.toLong(16).toInt()
+
+        val decimals = resultJson["constant_result"]?.jsonArray?.getOrNull(0)?.jsonPrimitive?.content
+            ?.let { it.toLongOrNull(16)?.toInt() }
+            ?: decodeDecimalsFromErrorMessage(resultJson)
+            ?: fetchDecimalsFromTransactionsWithClient(client, ownerAddress)
+            ?: 6
+
+        decimalsCache = decimals
+        return decimals
+    }
+
+    private fun decodeDecimalsFromErrorMessage(resultJson: JsonObject): Int? {
+        val message = (resultJson["result"] as? JsonObject)?.get("message")?.jsonPrimitive?.content
+            ?: resultJson["message"]?.jsonPrimitive?.content
+            ?: return null
+        return try {
+            Hex.decode(message).decodeToString().trim().toIntOrNull()
+        } catch (_: Exception) {
+            message.trim().toIntOrNull()
+        }
+    }
+
+    private suspend fun fetchDecimalsFromTransactionsWithClient(client: HttpClient, address: String): Int? {
+        val url = "${networkConfig.tronApiBase}/v1/accounts/$address/transactions/trc20?limit=1&contract_address=$contractAddress"
+        return try {
+            val response: HttpResponse = client.get(url)
+            val body = response.body<String>()
+            val json = Json.parseToJsonElement(body).jsonObject
+            json["data"]?.jsonArray?.firstOrNull()?.jsonObject
+                ?.get("token_info")?.jsonObject
+                ?.get("decimals")?.jsonPrimitive?.intOrNull
+        } catch (_: Exception) {
+            null
+        }
     }
 }

@@ -16,17 +16,38 @@ private fun formatTrxValue(sun: Long): String {
 }
 
 /**
+ * Format a milli-Gwei value (1 mGwei = 0.001 Gwei) as a Gwei string.
+ * Examples: 25_000 -> "25", 50 -> "0.05", 1_500 -> "1.5", -500 -> "-0.5".
+ */
+fun formatGwei(milliGwei: Long): String {
+    val sign = if (milliGwei < 0) "-" else ""
+    val abs = if (milliGwei == Long.MIN_VALUE) Long.MAX_VALUE else kotlin.math.abs(milliGwei)
+    val whole = abs / 1000
+    val frac = (abs % 1000).toString().padStart(3, '0').trimEnd('0')
+    return if (frac.isEmpty()) "$sign$whole" else "$sign$whole.$frac"
+}
+
+/**
+ * Parse a user-entered Gwei string (e.g. "25" or "0.05") into milli-Gwei.
+ * Returns `null` when the input is not a valid number.
+ */
+fun parseGweiToMilliGwei(text: String): Long? {
+    val d = text.toDoubleOrNull() ?: return null
+    return (d * 1000).toLong()
+}
+
+/**
  * Format [CustomFeeParams] into a short, human-readable string suitable for
  * display inside a fee-selection chip.
  *
- * Returns `null` when no params are available (e.g. Auto mode).
+ * Returns `null` when no params are available.
  */
 fun formatFeeChipRate(params: CustomFeeParams?): String? {
     if (params == null) return null
     return when (params) {
         is CustomFeeParams.Btc -> "${params.feeRateSatVb} sat/vB"
-        is CustomFeeParams.Eth -> "${params.maxFeePerGasGwei} Gwei"
-        is CustomFeeParams.Trc20 -> "${formatTrxValue(params.feeLimitSun)} TRX"
+        is CustomFeeParams.Eth -> "${formatGwei(params.maxFeePerGasMilliGwei)} Gwei"
+        is CustomFeeParams.Tron -> "${formatTrxValue(params.feeLimitSun)} TRX"
     }
 }
 
@@ -39,10 +60,10 @@ fun formatFeeDetail(params: CustomFeeParams?): List<String>? {
     return when (params) {
         is CustomFeeParams.Btc -> listOf("Fee rate: ${params.feeRateSatVb} sat/vB")
         is CustomFeeParams.Eth -> listOf(
-            "Max fee: ${params.maxFeePerGasGwei} Gwei",
-            "Priority tip: ${params.maxPriorityFeePerGasGwei} Gwei"
+            "Max fee: ${formatGwei(params.maxFeePerGasMilliGwei)} Gwei",
+            "Priority tip: ${formatGwei(params.maxPriorityFeePerGasMilliGwei)} Gwei"
         )
-        is CustomFeeParams.Trc20 -> listOf(
+        is CustomFeeParams.Tron -> listOf(
             "Fee limit: ${formatTrxValue(params.feeLimitSun)} TRX (${params.feeLimitSun} SUN)"
         )
     }

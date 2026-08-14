@@ -45,6 +45,7 @@ import com.ultrabytecoder.kryptakeep.ui.viewmodel.CustomNodesViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupState
 import com.ultrabytecoder.kryptakeep.domain.repository.PinState
+import com.ultrabytecoder.kryptakeep.domain.provider.FiatQuoteProvider
 import org.koin.compose.koinInject
 import org.koin.core.qualifier.named
 import com.ultrabytecoder.kryptakeep.domain.usecase.CheckPinStatusUseCase
@@ -148,8 +149,13 @@ fun App() {
                 val getWallets: GetWalletsUseCase = koinInject()
                 val syncUseCase: SyncUseCase = koinInject()
                 val syncManager: SyncManager = koinInject()
+                val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
+                val quoteProvider: FiatQuoteProvider = koinInject()
                 val viewModel = remember(route.walletId) {
-                    AccountsListViewModel(route.walletId, getAccounts, getWallets, syncUseCase, syncManager)
+                    AccountsListViewModel(
+                        route.walletId, getAccounts, getWallets, syncUseCase, syncManager,
+                        settingsStorage, quoteProvider
+                    )
                 }
                 AccountsListScreen(navController, viewModel)
             }
@@ -159,8 +165,13 @@ fun App() {
                 val getAccountAddress: GetAccountAddressUseCase = koinInject()
                 val accountRepository: com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository = koinInject()
                 val transactionRepository: TransactionRepository = koinInject()
+                val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
+                val quoteProvider: FiatQuoteProvider = koinInject()
                 val viewModel = remember(route.accountId, route.preselectedTokenId) {
-                    AccountDetailsViewModel(route.accountId, route.preselectedTokenId, getAccounts, getAccountAddress, accountRepository, transactionRepository)
+                    AccountDetailsViewModel(
+                        route.accountId, route.preselectedTokenId, getAccounts, getAccountAddress,
+                        accountRepository, transactionRepository, settingsStorage, quoteProvider
+                    )
                 }
                 AccountDetailsScreen(navController, viewModel)
             }
@@ -216,10 +227,17 @@ fun App() {
             composable<Screen.ExportMnemonic> { backStackEntry ->
                 val route = backStackEntry.toRoute<Screen.ExportMnemonic>()
                 val getMnemonic: GetMnemonicUseCase = koinInject()
+                val verifyPin: VerifyPinUseCase = koinInject()
+                val checkPinStatus: CheckPinStatusUseCase = koinInject()
+                val biometricService = rememberBiometricService()
+                val biometricRepository: BiometricRepository = koinInject()
                 val viewModel = remember(route.walletId) {
-                    ExportMnemonicViewModel(route.walletId, getMnemonic)
+                    ExportMnemonicViewModel(
+                        route.walletId, getMnemonic, verifyPin, checkPinStatus,
+                        biometricRepository, biometricService
+                    )
                 }
-                ExportMnemonicScreen(navController, viewModel)
+                ExportMnemonicScreen(navController, viewModel, biometricRepository)
             }
             composable<Screen.ManageWallets> {
                 val getWallets: GetWalletsUseCase = koinInject()
@@ -253,7 +271,8 @@ fun App() {
                 val biometricRepository: BiometricRepository = koinInject()
 
                 val verifyPin: VerifyPinUseCase = koinInject()
-                val viewModel = remember { SettingsViewModel(verifyPin, biometricRepository, biometricService) }
+                val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
+                val viewModel = remember { SettingsViewModel(verifyPin, biometricRepository, biometricService, settingsStorage) }
                 SettingsScreen(navController, viewModel)
             }
             composable<Screen.CustomNodes> {

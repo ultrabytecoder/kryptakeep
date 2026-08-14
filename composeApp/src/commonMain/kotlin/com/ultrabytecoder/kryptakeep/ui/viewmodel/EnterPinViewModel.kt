@@ -12,6 +12,7 @@ import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
 import com.ultrabytecoder.kryptakeep.domain.service.BiometricService
 import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
 import com.ultrabytecoder.kryptakeep.providers.SyncMode
+import com.ultrabytecoder.kryptakeep.security.wipe
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -114,12 +115,16 @@ class EnterPinViewModel(
                 val firstState = checkPinStatus().first()
                 if (firstState is PinState.Setup && !firstState.isLocked && biometricRepository.isBiometricEnabled.value) {
                     val token = biometricRepository.authenticate(biometricService)
-                    if (token != null) {
-                        val walletId = getWalletsUseCase().first().firstOrNull()?.id
-                        if (walletId != null) {
-                            syncUseCase(viewModelScope, walletId, SyncMode.FULL)
-                            _events.emit(EnterPinEvent.NavigateToAccountsList(walletId))
+                    try {
+                        if (token != null) {
+                            val walletId = getWalletsUseCase().first().firstOrNull()?.id
+                            if (walletId != null) {
+                                syncUseCase(viewModelScope, walletId, SyncMode.FULL)
+                                _events.emit(EnterPinEvent.NavigateToAccountsList(walletId))
+                            }
                         }
+                    } finally {
+                        token?.wipe()
                     }
                 }
             }
@@ -132,12 +137,16 @@ class EnterPinViewModel(
             if (!biometricRepository.isBiometricEnabled.value) return@launch
             biometricMutex.withLock {
                 val token = biometricRepository.authenticate(biometricService)
-                if (token != null) {
-                    val walletId = getWalletsUseCase().first().firstOrNull()?.id
-                    if (walletId != null) {
-                        syncUseCase(viewModelScope, walletId, SyncMode.FULL)
-                        _events.emit(EnterPinEvent.NavigateToAccountsList(walletId))
+                try {
+                    if (token != null) {
+                        val walletId = getWalletsUseCase().first().firstOrNull()?.id
+                        if (walletId != null) {
+                            syncUseCase(viewModelScope, walletId, SyncMode.FULL)
+                            _events.emit(EnterPinEvent.NavigateToAccountsList(walletId))
+                        }
                     }
+                } finally {
+                    token?.wipe()
                 }
             }
         }
@@ -167,8 +176,9 @@ class EnterPinViewModel(
     private fun verifyPin(pin: String) {
         _state.update { it.copy(isProcessing = true, enteredPin = "") }
         viewModelScope.launch {
+            val pinChars = pin.toCharArray()
             try {
-                when (val result = verifyPinUseCase(pin)) {
+                when (val result = verifyPinUseCase(pinChars)) {
                     is VerifyResult.Success -> {
                         val walletId = getWalletsUseCase().first().firstOrNull()?.id
                         if (walletId != null) {
@@ -223,6 +233,8 @@ class EnterPinViewModel(
                         errorMessage = e.message ?: "Verification failed"
                     )
                 }
+            } finally {
+                pinChars.wipe()
             }
         }
     }

@@ -2,6 +2,7 @@ package com.ultrabytecoder.kryptakeep.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import com.ultrabytecoder.kryptakeep.domain.usecase.CreateWalletUseCase
+import com.ultrabytecoder.kryptakeep.security.wipe
 
 class CreateWalletViewModel(
     private val createWalletUseCase: CreateWalletUseCase
@@ -15,10 +16,17 @@ class CreateWalletViewModel(
         name: String,
         mnemonic: String,
         passphrase: String = ""
-    ): Result = try {
-        val walletId = createWalletUseCase(name, mnemonic, passphrase)
-        Result.Success(walletId)
-    } catch (e: Exception) {
-        Result.Error(e.message ?: "Invalid mnemonic")
+    ): Result {
+        val mnemonicChars = mnemonic.toCharArray()
+        val passphraseChars = passphrase.toCharArray()
+        return try {
+            val walletId = createWalletUseCase(name, mnemonicChars, passphraseChars)
+            Result.Success(walletId)
+        } catch (e: Exception) {
+            Result.Error(e.message ?: "Invalid mnemonic")
+        } finally {
+            mnemonicChars.wipe()
+            passphraseChars.wipe()
+        }
     }
 }

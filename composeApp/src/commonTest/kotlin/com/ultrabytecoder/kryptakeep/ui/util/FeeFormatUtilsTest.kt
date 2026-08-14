@@ -22,14 +22,53 @@ class FeeFormatUtilsTest {
 
     @Test
     fun formatFeeChipRate_eth() {
-        val params = com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams.Eth(25, 35)
+        val params = com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams.Eth(25_000, 35_000)
         assertEquals("35 Gwei", formatFeeChipRate(params))
     }
 
     @Test
     fun formatFeeChipRate_trc20() {
-        val params = com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams.Trc20(35_000_000)
+        val params = com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams.Tron(35_000_000)
         assertEquals("35 TRX", formatFeeChipRate(params))
+    }
+
+    // --- formatGwei / parseGweiToMilliGwei ---
+
+    @Test
+    fun formatGwei_wholeGwei() {
+        assertEquals("25", formatGwei(25_000))
+        assertEquals("35", formatGwei(35_000))
+        assertEquals("1000", formatGwei(1_000_000))
+    }
+
+    @Test
+    fun formatGwei_fractionalGwei() {
+        assertEquals("0.05", formatGwei(50))
+        assertEquals("0.001", formatGwei(1))
+        assertEquals("1.5", formatGwei(1_500))
+        assertEquals("2.005", formatGwei(2_005))
+    }
+
+    @Test
+    fun formatGwei_zeroAndNegative() {
+        assertEquals("0", formatGwei(0))
+        assertEquals("-0.5", formatGwei(-500))
+        assertEquals("-1.5", formatGwei(-1_500))
+        assertEquals("-25", formatGwei(-25_000))
+    }
+
+    @Test
+    fun formatGwei_largeValue() {
+        assertEquals("999999.999", formatGwei(999_999_999))
+    }
+
+    @Test
+    fun parseGweiToMilliGwei_parses() {
+        assertEquals(25_000, parseGweiToMilliGwei("25"))
+        assertEquals(50, parseGweiToMilliGwei("0.05"))
+        assertEquals(1_500, parseGweiToMilliGwei("1.5"))
+        assertNull(parseGweiToMilliGwei("abc"))
+        assertNull(parseGweiToMilliGwei(""))
     }
 
     // --- formatFeeDetail ---
@@ -50,7 +89,7 @@ class FeeFormatUtilsTest {
 
     @Test
     fun formatFeeDetail_eth() {
-        val params = com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams.Eth(25, 35)
+        val params = com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams.Eth(25_000, 35_000)
         val detail = formatFeeDetail(params)
         assertNotNull(detail)
         assertEquals(2, detail.size)
@@ -60,7 +99,7 @@ class FeeFormatUtilsTest {
 
     @Test
     fun formatFeeDetail_trc20() {
-        val params = com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams.Trc20(35_000_000)
+        val params = com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams.Tron(35_000_000)
         val detail = formatFeeDetail(params)
         assertNotNull(detail)
         assertEquals(1, detail.size)

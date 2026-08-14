@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,8 +44,11 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.ripple
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
+import compose.icons.feathericons.ChevronDown
+import compose.icons.feathericons.DollarSign
 import compose.icons.feathericons.Server
 import compose.icons.feathericons.Shield
+import com.ultrabytecoder.kryptakeep.domain.model.FiatCurrency
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.navigation.Screen
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SettingsPinAction
@@ -57,8 +62,10 @@ fun SettingsScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsStateWithLifecycle()
+    val fiatCurrency by viewModel.fiatCurrency.collectAsStateWithLifecycle()
 
     var pinInput by rememberSaveable { mutableStateOf("") }
+    var currencyMenuExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -132,6 +139,89 @@ fun SettingsScreen(
                             checked = isBiometricEnabled,
                             onCheckedChange = { viewModel.toggleBiometric(it) }
                         )
+                    }
+                }
+            }
+
+            // Currency section
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                "Currency",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(),
+                        onClick = { currencyMenuExpanded = true }
+                    ),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        FeatherIcons.DollarSign,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Fiat Currency",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Used to display balances across the app",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        text = fiatCurrency.code,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        FeatherIcons.ChevronDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    DropdownMenu(
+                        expanded = currencyMenuExpanded,
+                        onDismissRequest = { currencyMenuExpanded = false }
+                    ) {
+                        FiatCurrency.entries.forEach { currency ->
+                            DropdownMenuItem(
+                                text = { Text("${currency.code} — ${currency.displayName}") },
+                                onClick = {
+                                    currencyMenuExpanded = false
+                                    viewModel.setFiatCurrency(currency)
+                                }
+                            )
+                        }
                     }
                 }
             }

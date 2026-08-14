@@ -2,16 +2,22 @@ package com.ultrabytecoder.kryptakeep.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ultrabytecoder.kryptakeep.data.SettingsKeys
+import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
+import com.ultrabytecoder.kryptakeep.domain.model.FiatCurrency
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
+import com.ultrabytecoder.kryptakeep.domain.provider.FiatQuoteProvider
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetAccountAddressUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetAccountsUseCase
+import com.ultrabytecoder.kryptakeep.ui.util.formatFiat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -34,7 +40,9 @@ class AccountDetailsViewModel(
     private val getAccounts: GetAccountsUseCase,
     private val getAccountAddress: GetAccountAddressUseCase,
     private val accountRepository: AccountRepository,
-    private val transactionRepository: TransactionRepository
+    private val transactionRepository: TransactionRepository,
+    settingsStorage: SettingsStorage,
+    private val quoteProvider: FiatQuoteProvider
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AccountDetailUiState())
@@ -47,6 +55,23 @@ class AccountDetailsViewModel(
     val isLoadingMore: StateFlow<Boolean> = _uiState.map { it.isLoadingMore }.stateIn(viewModelScope, SharingStarted.Lazily, false)
     val hasMore: StateFlow<Boolean> = _uiState.map { it.hasMore }.stateIn(viewModelScope, SharingStarted.Lazily, true)
     val error: StateFlow<String?> = _uiState.map { it.error }.stateIn(viewModelScope, SharingStarted.Lazily, null)
+
+    val fiatCurrency: StateFlow<FiatCurrency> = MutableStateFlow(
+        FiatCurrency.fromCode(settingsStorage.getString(SettingsKeys.FIAT_CURRENCY))
+    ).asStateFlow()
+
+    private val _selectedAccountFlow = MutableStateFlow<AccountInfo?>(null)
+
+    val selectedFiatBalance: StateFlow<String?> = combine(
+        _selectedAccountFlow,
+        fiatCurrency
+    ) { selected, currency ->
+        if (selected == null) return@combine null
+        val amount = selected.amount.toDoubleOrNull() ?: 0.0
+        val price = quoteProvider.getPrice(selected.symbol, currency)
+        formatFiat(amount * price, currency.code)
+    }
+    .stateIn(viewModelScope, SharingStarted.Lazily, null)
 
     private val pageSize = 20L
 
@@ -63,6 +88,7 @@ class AccountDetailsViewModel(
                     tokens.find { it.id == id } ?: parent
                 } ?: parent
 
+                _selectedAccountFlow.value = selected
                 _uiState.value = AccountDetailUiState(
                     parent = parent,
                     tokens = tokens,
@@ -77,6 +103,7 @@ class AccountDetailsViewModel(
     }
 
     fun selectAccount(account: AccountInfo) {
+        _selectedAccountFlow.value = account
         _uiState.value = _uiState.value.copy(
             selectedAccount = account,
             transactions = emptyList(),

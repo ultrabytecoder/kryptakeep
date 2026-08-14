@@ -32,51 +32,51 @@ class FeeValidatorTest {
 
     @Test
     fun ethMaxFee_validBoundaries() {
-        assertTrue(FeeValidator.validateEthMaxFee(1L), "1 Gwei should be valid")
-        assertTrue(FeeValidator.validateEthMaxFee(10_000L), "10000 Gwei should be valid")
-        assertTrue(FeeValidator.validateEthMaxFee(35L), "35 Gwei should be valid")
+        assertTrue(FeeValidator.validateEthMaxFee(1L), "1 mGwei (0.001 Gwei) should be valid")
+        assertTrue(FeeValidator.validateEthMaxFee(10_000_000L), "10000 Gwei should be valid")
+        assertTrue(FeeValidator.validateEthMaxFee(35_000L), "35 Gwei should be valid")
     }
 
     @Test
     fun ethMaxFee_outOfRange() {
         assertFalse(FeeValidator.validateEthMaxFee(0L), "0 should be invalid")
-        assertFalse(FeeValidator.validateEthMaxFee(10_001L), "10001 should be invalid")
+        assertFalse(FeeValidator.validateEthMaxFee(10_000_001L), "10001 Gwei should be invalid")
         assertFalse(FeeValidator.validateEthMaxFee(-1L), "negative should be invalid")
     }
 
     @Test
     fun ethPriorityFee_validBoundaries() {
-        assertTrue(FeeValidator.validateEthPriorityFee(1L), "1 Gwei should be valid")
-        assertTrue(FeeValidator.validateEthPriorityFee(1_000L), "1000 Gwei should be valid")
+        assertTrue(FeeValidator.validateEthPriorityFee(1L), "1 mGwei (0.001 Gwei) should be valid")
+        assertTrue(FeeValidator.validateEthPriorityFee(1_000_000L), "1000 Gwei should be valid")
     }
 
     @Test
     fun ethPriorityFee_outOfRange() {
         assertFalse(FeeValidator.validateEthPriorityFee(0L))
-        assertFalse(FeeValidator.validateEthPriorityFee(1_001L))
+        assertFalse(FeeValidator.validateEthPriorityFee(1_000_001L))
     }
 
     // --- ETH combined validation (EIP-1559 constraint) ---
 
     @Test
     fun ethFeeParams_valid() {
-        assertTrue(FeeValidator.validateEthFeeParams(25L, 35L), "25/35 should be valid")
-        assertTrue(FeeValidator.validateEthFeeParams(1L, 1L), "1/1 should be valid (equal)")
-        assertTrue(FeeValidator.validateEthFeeParams(100L, 10_000L), "100/10000 should be valid")
+        assertTrue(FeeValidator.validateEthFeeParams(25_000L, 35_000L), "25/35 Gwei should be valid")
+        assertTrue(FeeValidator.validateEthFeeParams(1L, 1L), "1/1 mGwei should be valid (equal)")
+        assertTrue(FeeValidator.validateEthFeeParams(100L, 10_000_000L), "0.1/10000 Gwei should be valid")
     }
 
     @Test
     fun ethFeeParams_priorityExceedsMax() {
-        assertFalse(FeeValidator.validateEthFeeParams(50L, 30L), "priority > max should be invalid")
-        assertFalse(FeeValidator.validateEthFeeParams(1_000L, 1L), "priority >> max should be invalid")
+        assertFalse(FeeValidator.validateEthFeeParams(50_000L, 30_000L), "priority > max should be invalid")
+        assertFalse(FeeValidator.validateEthFeeParams(1_000_000L, 1L), "priority >> max should be invalid")
     }
 
     @Test
     fun ethFeeParams_outOfRange() {
-        assertFalse(FeeValidator.validateEthFeeParams(0L, 35L), "priority 0 should be invalid")
-        assertFalse(FeeValidator.validateEthFeeParams(25L, 0L), "max 0 should be invalid")
-        assertFalse(FeeValidator.validateEthFeeParams(1_001L, 10_000L), "priority 1001 should be invalid")
-        assertFalse(FeeValidator.validateEthFeeParams(25L, 10_001L), "max 10001 should be invalid")
+        assertFalse(FeeValidator.validateEthFeeParams(0L, 35_000L), "priority 0 should be invalid")
+        assertFalse(FeeValidator.validateEthFeeParams(25_000L, 0L), "max 0 should be invalid")
+        assertFalse(FeeValidator.validateEthFeeParams(1_000_001L, 10_000_000L), "priority 1001 Gwei should be invalid")
+        assertFalse(FeeValidator.validateEthFeeParams(25_000L, 10_000_001L), "max 10001 Gwei should be invalid")
     }
 
     // --- TRC-20 ---

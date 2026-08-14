@@ -459,7 +459,7 @@ class BtcProvider(
         return null
     }
 
-    private fun resolveBtcFeeRate(feeParams: CustomFeeParams?): Long {
+    private suspend fun resolveBtcFeeRate(feeParams: CustomFeeParams?): Long {
         return when (feeParams) {
             null -> fetchFeeRate()
             is CustomFeeParams.Btc -> feeParams.feeRateSatVb
@@ -616,8 +616,8 @@ class BtcProvider(
         }
     }
 
-    override suspend fun send(address: String, amount: BigDecimal, accountId: String, feeParams: CustomFeeParams?): String {
-        val (txHex, spentUtxoIds, hasChange) = buildSignedTransaction(address, amount, accountId, feeParams)
+    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
+        val (txHex, spentUtxoIds, hasChange) = buildSignedTransaction(address, amount, accountId, null)
 
         val txid = broadcast(txHex)
 

@@ -145,20 +145,19 @@ class TrxProvider(
         val fromKey = deriveTrxKeyFromPath(account.derivationPath)
         val fromAddress = getAddress(accountId)
 
-        // Validate feeParams type for TRC20 custom fees
-        if (feeParams != null && feeParams !is CustomFeeParams.Trc20) {
-            throw IllegalArgumentException("TRX provider received ${feeParams::class.simpleName}")
+        // Native TRX transfers have no fee ladder: the fee is fixed (0 TRX with
+        // available bandwidth, otherwise a deterministic burn). fee_limit is a
+        // smart-contract energy cap that the node silently ignores for plain transfers.
+        if (feeParams != null) {
+            throw IllegalArgumentException(
+                "Native TRX transfers do not support custom fee parameters; " +
+                    "fee is determined by bandwidth availability. Received: ${feeParams::class.simpleName}"
+            )
         }
 
         val client = createClient()
         try {
-            val feeLimitSun = (feeParams as? CustomFeeParams.Trc20)?.feeLimitSun ?: 0L
-
-            val requestBody = if (feeLimitSun > 0) {
-                """{"to_address":"$address","owner_address":"$fromAddress","amount":$sunAmount,"fee_limit":$feeLimitSun,"visible":true}"""
-            } else {
-                """{"to_address":"$address","owner_address":"$fromAddress","amount":$sunAmount,"visible":true}"""
-            }
+            val requestBody = """{"to_address":"$address","owner_address":"$fromAddress","amount":$sunAmount,"visible":true}"""
 
             val createResponse: HttpResponse = client.post("${networkConfig.tronApiBase}/wallet/createtransaction") {
                 contentType(ContentType.Application.Json)
@@ -199,8 +198,8 @@ class TrxProvider(
         }
     }
 
-    override suspend fun send(address: String, amount: BigDecimal, accountId: String, feeParams: CustomFeeParams?): String {
-        val broadcastBody = createTransaction(address, amount, accountId, feeParams)
+    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
+        val broadcastBody = createTransaction(address, amount, accountId, null)
         return broadcast(broadcastBody)
     }
 

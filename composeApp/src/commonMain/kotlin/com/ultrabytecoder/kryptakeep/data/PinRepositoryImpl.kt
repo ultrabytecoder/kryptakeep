@@ -5,6 +5,7 @@ import com.ultrabytecoder.kryptakeep.domain.repository.PinRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.PinState
 import com.ultrabytecoder.kryptakeep.domain.repository.VerifyResult
 import com.ultrabytecoder.kryptakeep.security.Pbkdf2
+import com.ultrabytecoder.kryptakeep.security.wipe
 import com.ultrabytecoder.kryptakeep.service.EncryptionService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -92,123 +93,150 @@ class PinRepositoryImpl(
         }
     }
 
-    override suspend fun setupPin(pin: String) = withContext(Dispatchers.Default) {
-        require(pin.length == PinConfig.LENGTH && pin.all { it.isDigit() }) {
+    override suspend fun setupPin(pin: CharArray) = withContext(Dispatchers.Default) {
+        require(pin.size == PinConfig.LENGTH && pin.all { it.isDigit() }) {
             "PIN must be ${PinConfig.LENGTH} digits"
         }
 
-        val salt = CryptoRand.Default.nextBytes(ByteArray(PinConfig.SALT_SIZE))
-        val hash = Pbkdf2.derive(
-            password = pin,
-            salt = salt,
-            iterations = PinConfig.PBKDF2_ITERATIONS,
-            derivedKeyLengthBytes = 32
-        )
+        var salt: ByteArray? = null
+        var hash: ByteArray? = null
+        val pinBytes = pin.map { it.code.toByte() }.toByteArray()
 
-        val data = PinSecureData(
-            pinHash = Base64.Default.encode(hash),
-            salt = Base64.Default.encode(salt),
-            iterations = PinConfig.PBKDF2_ITERATIONS
-        )
-
-        mutex.withLock {
-            saveData(data)
-            _pinStateFlow.value = PinState.Setup(
-                failedAttempts = 0,
-                lockedUntil = 0,
-                isCorrupted = false
-            )
-        }
-    }
-
-    override suspend fun verifyPin(pin: String): VerifyResult = withContext(Dispatchers.Default) {
-        mutex.withLock {
-            // Handle corrupted data
-            val loaded = try {
-                val encryptedBlob = settingsStorage.getString(PIN_DATA_KEY)
-                    ?: return@withContext VerifyResult.Corrupted
-                loadData(encryptedBlob)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                _pinStateFlow.value = PinState.Setup(
-                    failedAttempts = PinConfig.MAX_ATTEMPTS,
-                    lockedUntil = 0,
-                    isCorrupted = true
-                )
-                return@withContext VerifyResult.Corrupted
-            }
-
-            val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
-
-            // Check lockout
-            if (now < loaded.lockedUntil) {
-                return@withContext VerifyResult.Locked(loaded.lockedUntil)
-            }
-
-            // Reset failed attempts if lockout has expired (lockoutCount persists for escalation)
-            val currentData = if (loaded.lockedUntil > 0L && now >= loaded.lockedUntil) {
-                val resetData = loaded.copy(failedAttempts = 0, lockedUntil = 0L)
-                saveData(resetData)
-                resetData
-            } else {
-                loaded
-            }
-
-            // PBKDF2 inside the lock — avoids stale data race
-            val salt = Base64.Default.decode(currentData.salt)
-            val testHash = Pbkdf2.derive(
-                password = pin,
+        try {
+            salt = CryptoRand.Default.nextBytes(ByteArray(PinConfig.SALT_SIZE))
+            hash = Pbkdf2.derive(
+                password = pinBytes,
                 salt = salt,
-                iterations = currentData.iterations,
+                iterations = PinConfig.PBKDF2_ITERATIONS,
                 derivedKeyLengthBytes = 32
             )
-            val storedHash = Base64.Default.decode(currentData.pinHash)
 
-            if (constantTimeEquals(testHash, storedHash)) {
-                val resetData = currentData.copy(failedAttempts = 0, lockedUntil = 0L, lockoutCount = 0)
-                saveData(resetData)
+            val data = PinSecureData(
+                pinHash = Base64.Default.encode(hash),
+                salt = Base64.Default.encode(salt),
+                iterations = PinConfig.PBKDF2_ITERATIONS
+            )
+
+            mutex.withLock {
+                saveData(data)
                 _pinStateFlow.value = PinState.Setup(
                     failedAttempts = 0,
                     lockedUntil = 0,
                     isCorrupted = false
                 )
-                VerifyResult.Success
-            } else {
-                val newFailed = currentData.failedAttempts + 1
-                val lockoutSeconds = if (newFailed >= PinConfig.MAX_ATTEMPTS) {
-                    val newLockoutCount = currentData.lockoutCount + 1
-                    val escalation = newLockoutCount - 1
-                    val shift = escalation.coerceAtMost(62)
-                    val maxMultiplier = PinConfig.MAX_LOCKOUT.inWholeSeconds / PinConfig.INITIAL_LOCKOUT.inWholeSeconds
-                    val multiplier = (1L shl shift).coerceAtMost(maxMultiplier)
-                    PinConfig.INITIAL_LOCKOUT.inWholeSeconds * multiplier
-                } else {
-                    0L
-                }
-
-                val lockedUntil = if (lockoutSeconds > 0L) now + lockoutSeconds * 1000 else 0L
-                val remaining = PinConfig.MAX_ATTEMPTS - newFailed
-
-                val updatedData = currentData.copy(
-                    failedAttempts = newFailed,
-                    lockedUntil = lockedUntil,
-                    lockoutCount = if (lockoutSeconds > 0L) currentData.lockoutCount + 1 else currentData.lockoutCount
-                )
-                saveData(updatedData)
-
-                _pinStateFlow.value = PinState.Setup(
-                    failedAttempts = newFailed,
-                    lockedUntil = lockedUntil,
-                    isCorrupted = false
-                )
-
-                if (lockedUntil > now) {
-                    VerifyResult.Locked(lockedUntil)
-                } else {
-                    VerifyResult.WrongPin(remaining.coerceAtLeast(1))
-                }
             }
+        } finally {
+            pinBytes.wipe()
+            salt?.wipe()
+            hash?.wipe()
+        }
+    }
+
+    override suspend fun verifyPin(pin: CharArray): VerifyResult = withContext(Dispatchers.Default) {
+        mutex.withLock {
+            var salt: ByteArray? = null
+            var testHash: ByteArray? = null
+            var storedHash: ByteArray? = null
+            val pinBytes = pin.map { it.code.toByte() }.toByteArray()
+
+            val result: VerifyResult = try {
+                // Handle corrupted data
+                val loaded = try {
+                    val encryptedBlob = settingsStorage.getString(PIN_DATA_KEY)
+                    if (encryptedBlob == null) null else loadData(encryptedBlob)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    _pinStateFlow.value = PinState.Setup(
+                        failedAttempts = PinConfig.MAX_ATTEMPTS,
+                        lockedUntil = 0,
+                        isCorrupted = true
+                    )
+                    null
+                }
+
+                if (loaded == null) {
+                    VerifyResult.Corrupted
+                } else {
+                    val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
+
+                    // Check lockout
+                    if (now < loaded.lockedUntil) {
+                        VerifyResult.Locked(loaded.lockedUntil)
+                    } else {
+                        // Reset failed attempts if lockout has expired (lockoutCount persists for escalation)
+                        val currentData = if (loaded.lockedUntil > 0L && now >= loaded.lockedUntil) {
+                            val resetData = loaded.copy(failedAttempts = 0, lockedUntil = 0L)
+                            saveData(resetData)
+                            resetData
+                        } else {
+                            loaded
+                        }
+
+                        // PBKDF2 inside the lock — avoids stale data race
+                        salt = Base64.Default.decode(currentData.salt)
+                        testHash = Pbkdf2.derive(
+                            password = pinBytes,
+                            salt = salt!!,
+                            iterations = currentData.iterations,
+                            derivedKeyLengthBytes = 32
+                        )
+                        storedHash = Base64.Default.decode(currentData.pinHash)
+
+                        if (constantTimeEquals(testHash!!, storedHash!!)) {
+                            val resetData = currentData.copy(failedAttempts = 0, lockedUntil = 0L, lockoutCount = 0)
+                            saveData(resetData)
+                            _pinStateFlow.value = PinState.Setup(
+                                failedAttempts = 0,
+                                lockedUntil = 0,
+                                isCorrupted = false
+                            )
+                            VerifyResult.Success
+                        } else {
+                            val newFailed = currentData.failedAttempts + 1
+                            val lockoutSeconds = if (newFailed >= PinConfig.MAX_ATTEMPTS) {
+                                val newLockoutCount = currentData.lockoutCount + 1
+                                val escalation = newLockoutCount - 1
+                                val shift = escalation.coerceAtMost(62)
+                                val maxMultiplier = PinConfig.MAX_LOCKOUT.inWholeSeconds / PinConfig.INITIAL_LOCKOUT.inWholeSeconds
+                                val multiplier = (1L shl shift).coerceAtMost(maxMultiplier)
+                                PinConfig.INITIAL_LOCKOUT.inWholeSeconds * multiplier
+                            } else {
+                                0L
+                            }
+
+                            val lockedUntil = if (lockoutSeconds > 0L) now + lockoutSeconds * 1000 else 0L
+                            val remaining = PinConfig.MAX_ATTEMPTS - newFailed
+
+                            val updatedData = currentData.copy(
+                                failedAttempts = newFailed,
+                                lockedUntil = lockedUntil,
+                                lockoutCount = if (lockoutSeconds > 0L) currentData.lockoutCount + 1 else currentData.lockoutCount
+                            )
+                            saveData(updatedData)
+
+                            _pinStateFlow.value = PinState.Setup(
+                                failedAttempts = newFailed,
+                                lockedUntil = lockedUntil,
+                                isCorrupted = false
+                            )
+
+                            if (lockedUntil > now) {
+                                VerifyResult.Locked(lockedUntil)
+                            } else {
+                                VerifyResult.WrongPin(remaining.coerceAtLeast(1))
+                            }
+                        }
+                    }
+                }
+            } finally {
+                pinBytes.wipe()
+                salt?.wipe()
+                testHash?.wipe()
+                storedHash?.wipe()
+            }
+
+            result
         }
     }
 
@@ -228,13 +256,25 @@ class PinRepositoryImpl(
 
     private fun loadData(encryptedBlob: String): PinSecureData {
         val encryptedBytes = Base64.Default.decode(encryptedBlob)
-        val decrypted = encryptionService.decrypt(encryptedBytes)
-        return json.decodeFromString<PinSecureData>(decrypted.decodeToString())
+        var decrypted: ByteArray? = null
+        return try {
+            decrypted = encryptionService.decrypt(encryptedBytes)
+            json.decodeFromString<PinSecureData>(decrypted.decodeToString())
+        } finally {
+            encryptedBytes.wipe()
+            decrypted?.wipe()
+        }
     }
 
     private fun saveData(data: PinSecureData) {
         val jsonString = json.encodeToString(PinSecureData.serializer(), data)
-        val encrypted = encryptionService.encrypt(jsonString.encodeToByteArray())
-        settingsStorage.putString(PIN_DATA_KEY, Base64.Default.encode(encrypted))
+        var plainBytes: ByteArray? = null
+        try {
+            plainBytes = jsonString.encodeToByteArray()
+            val encrypted = encryptionService.encrypt(plainBytes)
+            settingsStorage.putString(PIN_DATA_KEY, Base64.Default.encode(encrypted))
+        } finally {
+            plainBytes?.wipe()
+        }
     }
 }

@@ -137,7 +137,7 @@ class TonProvider(
     /** Extract BOC construction to prevent logic divergence between estimateFee and createTransaction */
     private fun buildExtMessageBoc(
         wallet: WalletContract,
-        seqno: Long,
+        seqno: Int,
         transferCell: Cell
     ): String {
         val extMsgBuilder = beginCell()
@@ -209,9 +209,8 @@ class TonProvider(
         }
     }
 
-    override suspend fun send(address: String, amount: BigDecimal, accountId: String, feeParams: CustomFeeParams?): String {
-        // feeParams is ignored for TON, but must match interface
-        val bocBase64 = createTransaction(address, amount, accountId, feeParams)
+    override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
+        val bocBase64 = createTransaction(address, amount, accountId, null)
         return broadcast(bocBase64)
     }
 

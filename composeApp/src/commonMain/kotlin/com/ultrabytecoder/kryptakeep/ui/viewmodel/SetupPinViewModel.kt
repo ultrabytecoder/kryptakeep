@@ -7,6 +7,7 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.GetWalletsUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SetupPinUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncUseCase
 import com.ultrabytecoder.kryptakeep.providers.SyncMode
+import com.ultrabytecoder.kryptakeep.security.wipe
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -90,8 +91,9 @@ class SetupPinViewModel(
 
         _state.update { it.copy(isProcessing = true) }
         viewModelScope.launch {
+            val pinChars = confirmPin.toCharArray()
             try {
-                setupPinUseCase(confirmPin)
+                setupPinUseCase(pinChars)
                 val walletId = getWalletsUseCase().first().firstOrNull()?.id
                 if (walletId != null) {
                     _state.update { it.copy(isProcessing = false) }
@@ -120,6 +122,8 @@ class SetupPinViewModel(
                     )
                 }
                 firstPin = ""
+            } finally {
+                pinChars.wipe()
             }
         }
     }

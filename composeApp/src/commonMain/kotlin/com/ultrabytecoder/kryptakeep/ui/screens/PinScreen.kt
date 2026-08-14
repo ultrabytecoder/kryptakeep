@@ -246,7 +246,7 @@ fun PinScreenEnter(
 
 /** Inline row of filled/empty dots using Box + CircleShape. */
 @Composable
-private fun PinDotsInline(
+internal fun PinDotsInline(
     enteredLength: Int,
     pinLength: Int,
     modifier: Modifier = Modifier

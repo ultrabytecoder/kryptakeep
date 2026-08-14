@@ -7,7 +7,7 @@ package com.ultrabytecoder.kryptakeep.security
  */
 expect object Pbkdf2 {
     fun derive(
-        password: String,
+        password: ByteArray,
         salt: ByteArray,
         iterations: Int,
         derivedKeyLengthBytes: Int = 32

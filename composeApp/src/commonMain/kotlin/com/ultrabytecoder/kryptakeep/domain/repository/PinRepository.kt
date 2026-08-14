@@ -16,7 +16,7 @@ sealed interface PinState {
 
 interface PinRepository {
     val pinStateFlow: StateFlow<PinState>
-    suspend fun setupPin(pin: String)
-    suspend fun verifyPin(pin: String): VerifyResult
+    suspend fun setupPin(pin: CharArray)
+    suspend fun verifyPin(pin: CharArray): VerifyResult
     suspend fun resetLockState()
 }

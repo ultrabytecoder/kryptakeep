@@ -113,6 +113,22 @@ class TrxProviderCreateTransactionTest {
     }
 
     @Test
+    fun createTransaction_rejectsCustomFeeParams() = runTest {
+        val provider = createProvider()
+        val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
+
+        assertFailsWith<IllegalArgumentException> {
+            provider.createTransaction(destAddress, BigDecimal.fromLong(100), ACCOUNT_ID, com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams.Tron(35_000_000L))
+        }
+    }
+
+    @Test
+    fun feePresets_returnsNull() = runTest {
+        val provider = createProvider()
+        assertEquals(null, provider.feePresets(ACCOUNT_ID))
+    }
+
+    @Test
     fun createTransaction_isDeterministic() = runTest {
         val provider = createProvider()
         val destAddress = provider.getAddress(DEST_ACCOUNT_ID)

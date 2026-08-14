@@ -5,7 +5,6 @@ import com.ultrabytecoder.kryptakeep.domain.model.AccountType
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
-import com.ultrabytecoder.kryptakeep.domain.service.KeyProvider
 import com.ultrabytecoder.kryptakeep.providers.ton.TonProvider
 import com.ultrabytecoder.kryptakeep.providers.tron.Trc20TokenProvider
 import com.ultrabytecoder.kryptakeep.providers.tron.TrxProvider
@@ -20,8 +19,7 @@ object ProviderFactory {
 
     suspend fun create(
         type: AccountType,
-        keyProvider: KeyProvider,
-        walletId: Long,
+        masterSeed: ByteArray,
         utxoRepository: UtxoRepository,
         accountRepository: AccountRepository,
         transactionRepository: TransactionRepository,
@@ -29,7 +27,6 @@ object ProviderFactory {
         params: String? = null
     ): Provider {
         val parsedParams = params?.let { json.parseToJsonElement(it).jsonObject } ?: JsonObject(emptyMap())
-        val masterSeed = keyProvider.getMasterSeed(walletId)
         val masterKey = DeterministicWallet.generate(masterSeed)
         return when (type) {
             is AccountType.Btc -> BtcProvider(

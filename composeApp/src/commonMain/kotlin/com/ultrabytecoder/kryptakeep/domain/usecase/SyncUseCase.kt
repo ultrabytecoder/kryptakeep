@@ -32,8 +32,10 @@ class SyncUseCase(
                         return@launch
                     }
                     try {
-                        val provider = ProviderFactory.create(account.type, keyProvider, account.walletId, utxoRepository, accountRepository, transactionRepository, networkConfig, account.params)
-                        provider.sync(account.id, syncMode)
+                        keyProvider.withMasterSeed(account.walletId) { masterSeed ->
+                            val provider = ProviderFactory.create(account.type, masterSeed, utxoRepository, accountRepository, transactionRepository, networkConfig, account.params)
+                            provider.sync(account.id, syncMode)
+                        }
                     } catch (e: Exception) {
                         println("Sync failed for account ${account.id}: ${e.message}")
                     } finally {

@@ -3,6 +3,7 @@ package com.ultrabytecoder.kryptakeep.data
 import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
 import com.ultrabytecoder.kryptakeep.domain.service.BiometricAuthResult
 import com.ultrabytecoder.kryptakeep.domain.service.BiometricService
+import com.ultrabytecoder.kryptakeep.security.wipe
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,14 +30,18 @@ class BiometricRepositoryImpl(
         if (!service.isAvailable) return false
         service.clear() // Clear any stale key/token before setup
         val token = CryptoRand.Default.nextBytes(ByteArray(32))
-        val success = withTimeoutOrNull(BIOMETRIC_TIMEOUT_MS) {
-            service.promptAndEncrypt(token)
-        } == true
-        if (success) {
-            settingsStorage.putString(KEY_ENABLED, "true")
-            _isBiometricEnabled.value = true
+        return try {
+            val success = withTimeoutOrNull(BIOMETRIC_TIMEOUT_MS) {
+                service.promptAndEncrypt(token)
+            } == true
+            if (success) {
+                settingsStorage.putString(KEY_ENABLED, "true")
+                _isBiometricEnabled.value = true
+            }
+            success
+        } finally {
+            token.wipe()
         }
-        return success
     }
 
     override suspend fun authenticate(service: BiometricService): ByteArray? {

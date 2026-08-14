@@ -11,5 +11,7 @@ import com.ionspin.kotlin.bignum.decimal.BigDecimal
  */
 data class FeeEstimation(
     val totalCost: BigDecimal,
-    val appliedParams: CustomFeeParams?
+    val appliedParams: CustomFeeParams?,
+    /** True when live EIP-1559 fee fetching failed and legacy gas price was used. */
+    val usedFallbackFees: Boolean = false
 )

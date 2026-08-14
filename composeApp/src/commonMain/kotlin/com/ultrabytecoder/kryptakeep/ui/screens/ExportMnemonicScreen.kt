@@ -1,5 +1,7 @@
 package com.ultrabytecoder.kryptakeep.ui.screens
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.keyframes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,6 +27,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,6 +39,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
@@ -44,7 +49,12 @@ import compose.icons.feathericons.Check
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
+import compose.icons.feathericons.Shield
+import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
+import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.platform.preventScreenshots
+import com.ultrabytecoder.kryptakeep.security.wipe
+import com.ultrabytecoder.kryptakeep.ui.components.Numpad
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.ExportMnemonicViewModel
 import kotlinx.coroutines.delay
 
@@ -52,7 +62,8 @@ import kotlinx.coroutines.delay
 @Composable
 fun ExportMnemonicScreen(
     navController: NavController,
-    viewModel: ExportMnemonicViewModel
+    viewModel: ExportMnemonicViewModel,
+    biometricRepository: BiometricRepository
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var mnemonicVisible by remember { mutableStateOf(false) }
@@ -86,6 +97,101 @@ fun ExportMnemonicScreen(
                 .preventScreenshots()
         ) {
             when (state) {
+                is ExportMnemonicViewModel.State.AuthRequired -> {
+                    val auth = state as ExportMnemonicViewModel.State.AuthRequired
+                    val isBiometricEnabled by biometricRepository.isBiometricEnabled.collectAsStateWithLifecycle()
+
+                    // Shake animation — triggers on each new shakeTriggerId
+                    val shakeAnimatable = remember { Animatable(0f) }
+                    LaunchedEffect(auth.shakeTriggerId) {
+                        shakeAnimatable.animateTo(
+                            targetValue = 0f,
+                            animationSpec = keyframes {
+                                durationMillis = 250
+                                0f at 0
+                                -12f at 50
+                                12f at 100
+                                -8f at 150
+                                8f at 200
+                                0f at 250
+                            }
+                        )
+                    }
+                    val shakeOffset = shakeAnimatable.value
+
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "Enter your PIN",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                "Verify your identity to view the recovery phrase",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Spacer(modifier = Modifier.height(32.dp))
+
+                            if (isBiometricEnabled) {
+                                IconButton(
+                                    onClick = { viewModel.triggerBiometric() },
+                                    enabled = !auth.isLocked && !auth.isProcessing
+                                ) {
+                                    Icon(
+                                        FeatherIcons.Shield,
+                                        contentDescription = "Use biometric verification",
+                                        modifier = Modifier.size(32.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+
+                            PinDotsInline(
+                                enteredLength = auth.enteredPin.length,
+                                pinLength = PinConfig.LENGTH,
+                                modifier = Modifier.offset { IntOffset(shakeOffset.toInt(), 0) }
+                            )
+
+                            if (auth.isProcessing) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else if (auth.isLocked) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "Too many attempts. Try again in ${auth.lockSecondsRemaining}s",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            } else if (auth.errorMessage != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    auth.errorMessage!!,
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+
+                        Numpad(
+                            onDigitClick = { viewModel.addDigit(it.toString()) },
+                            onDeleteClick = { viewModel.removeDigit() },
+                            isLocked = auth.isLocked || auth.isProcessing
+                        )
+                    }
+                }
+
                 is ExportMnemonicViewModel.State.Loading -> {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -97,6 +203,15 @@ fun ExportMnemonicScreen(
 
                 is ExportMnemonicViewModel.State.Loaded -> {
                     val mnemonic = (state as ExportMnemonicViewModel.State.Loaded).mnemonic
+
+                    // Wipe the mnemonic from memory when the screen leaves the composition
+                    DisposableEffect(mnemonic) {
+                        onDispose {
+                            mnemonic.wipe()
+                            viewModel.clearSensitiveData()
+                        }
+                    }
+                    val mnemonicText = mnemonic.concatToString()
 
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -157,7 +272,7 @@ fun ExportMnemonicScreen(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = if (mnemonicVisible) mnemonic else "\u2022".repeat(mnemonic.length),
+                                text = if (mnemonicVisible) mnemonicText else "\u2022".repeat(mnemonic.size),
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.Medium,
                                 maxLines = if (mnemonicVisible) 10 else 1,
@@ -170,7 +285,7 @@ fun ExportMnemonicScreen(
 
                     OutlinedButton(
                         onClick = {
-                            clipboardManager.setText(AnnotatedString(mnemonic))
+                            clipboardManager.setText(AnnotatedString(mnemonicText))
                             copied = true
                         },
                         enabled = mnemonicVisible,

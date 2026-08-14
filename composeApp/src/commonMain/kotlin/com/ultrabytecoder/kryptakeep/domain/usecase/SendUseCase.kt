@@ -25,8 +25,13 @@ class SendUseCase(
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
 
-        val provider = ProviderFactory.create(account.type, keyProvider, account.walletId, utxoRepository, accountRepository, transactionRepository, networkConfig, account.params)
-        val rawTx = provider.createTransaction(address, amount, account.id, feeParams)
-        return provider.broadcast(rawTx)
+        return keyProvider.withMasterSeed(account.walletId) { masterSeed ->
+            val provider = ProviderFactory.create(
+                account.type, masterSeed, utxoRepository, accountRepository,
+                transactionRepository, networkConfig, account.params
+            )
+            val rawTx = provider.createTransaction(address, amount, account.id, feeParams)
+            provider.broadcast(rawTx)
+        }
     }
 }

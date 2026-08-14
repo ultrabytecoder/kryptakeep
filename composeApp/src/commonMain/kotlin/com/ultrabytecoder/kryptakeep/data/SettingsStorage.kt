@@ -16,3 +16,7 @@ object CustomNodeKeys {
     const val TRX = "custom_node_trx"
     const val TON = "custom_node_ton"
 }
+
+object SettingsKeys {
+    const val FIAT_CURRENCY = "fiat_currency"
+}

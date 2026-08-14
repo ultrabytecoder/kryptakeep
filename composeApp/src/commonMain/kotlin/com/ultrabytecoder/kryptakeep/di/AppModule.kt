@@ -7,6 +7,8 @@ import com.ultrabytecoder.kryptakeep.data.PinRepositoryImpl
 import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.data.applyCustomNodes
 import com.ultrabytecoder.kryptakeep.db.KryptaKeepDatabase
+import com.ultrabytecoder.kryptakeep.domain.provider.FiatQuoteProvider
+import com.ultrabytecoder.kryptakeep.domain.provider.MockFiatQuoteProvider
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.PinRepository
@@ -67,4 +69,6 @@ fun appModule(networkConfig: NetworkConfig) = module {
     factory { VerifyPinUseCase(get()) }
 
     single<BiometricRepository> { BiometricRepositoryImpl(get<SettingsStorage>()) }
+
+    single<FiatQuoteProvider> { MockFiatQuoteProvider() }
 }
