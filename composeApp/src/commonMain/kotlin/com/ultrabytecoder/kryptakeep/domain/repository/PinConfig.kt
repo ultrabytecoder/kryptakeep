@@ -8,8 +8,6 @@ object PinConfig {
     val INITIAL_LOCKOUT = 1.minutes
     val MAX_LOCKOUT = 60.minutes
     const val PBKDF2_ITERATIONS = 600_000
-    const val MNEMONIC_PBKDF2_ITERATIONS = 600_000
-    const val MNEMONIC_KEY_SIZE = 32
     const val SALT_SIZE = 32
 }
 

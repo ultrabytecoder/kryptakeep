@@ -1,7 +1,6 @@
 package com.ultrabytecoder.kryptakeep.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
-import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.domain.usecase.CreateWalletUseCase
 import com.ultrabytecoder.kryptakeep.security.wipe
 
@@ -20,21 +19,16 @@ class CreateWalletViewModel(
     suspend fun createWallet(
         name: String,
         mnemonic: CharArray,
-        passphrase: CharArray = CharArray(0),
-        pin: CharArray
+        passphrase: CharArray = CharArray(0)
     ): Result {
-        if (pin.size != PinConfig.LENGTH || !pin.all { it.isDigit() }) {
-            return Result.Error("PIN must be ${PinConfig.LENGTH} digits")
-        }
         return try {
-            val walletId = createWalletUseCase(name, mnemonic, passphrase, pin)
+            val walletId = createWalletUseCase(name, mnemonic, passphrase)
             Result.Success(walletId)
         } catch (e: Exception) {
             Result.Error(e.message ?: "Invalid mnemonic")
         } finally {
             mnemonic.wipe()
             passphrase.wipe()
-            pin.wipe()
         }
     }
 }

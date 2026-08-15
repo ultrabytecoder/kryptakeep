@@ -30,6 +30,7 @@ import com.ultrabytecoder.kryptakeep.ui.screens.SettingsScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.CustomNodesScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.ChangePinScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.TransactionSentScreen
+import com.ultrabytecoder.kryptakeep.ui.screens.WelcomeScreen
 import com.ultrabytecoder.kryptakeep.ui.theme.KryptaKeepTheme
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.AccountDetailsViewModel
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncManager
@@ -112,7 +113,7 @@ fun App() {
                     }
                     is StartupState.NeedsPinSetup -> {
                         LaunchedEffect(currentState) {
-                            navController.navigate(Screen.SetupPin) {
+                            navController.navigate(Screen.Welcome) {
                                 popUpTo(Screen.Startup) { inclusive = true }
                             }
                         }
@@ -125,6 +126,9 @@ fun App() {
                         }
                     }
                 }
+            }
+            composable<Screen.Welcome> {
+                WelcomeScreen(navController)
             }
             composable<Screen.CreateWallet> {
                 val createWallet: CreateWalletUseCase = koinInject()

@@ -9,7 +9,6 @@ import com.ultrabytecoder.kryptakeep.security.AesGcmAuthenticationException
 import com.ultrabytecoder.kryptakeep.security.HardwareKeyInvalidatedException
 import com.ultrabytecoder.kryptakeep.security.HardwareKeyStore
 import com.ultrabytecoder.kryptakeep.security.KeyManager
-import com.ultrabytecoder.kryptakeep.security.MnemonicCipher
 import com.ultrabytecoder.kryptakeep.security.SessionManager
 import com.ultrabytecoder.kryptakeep.security.monotonicNowMillis
 import com.ultrabytecoder.kryptakeep.security.wipe
@@ -122,7 +121,16 @@ class PinRepositoryImpl(
             // Recreating the DB is safe here: there is no wallet data at stake
             // (this is the fresh-setup / recovery path, see SessionManager.unlockRecreating).
             keyManager.deleteAll()
-            val dek = keyManager.generateAndWrapDek(pin)
+            val dek = try {
+                keyManager.generateAndWrapDek(pin)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Hardware key / crypto failure — surface a user-friendly message
+                // on the PIN screen and leave no partial key material behind.
+                keyManager.deleteAll()
+                throw IllegalStateException("Failed to generate key", e)
+            }
 
             val opened = try {
                 sessionManager.unlockRecreating(dek)
@@ -232,7 +240,7 @@ class PinRepositoryImpl(
                         ChangePinResult.Locked(gate.lockedUntil)
                     is LockoutGate.Open -> {
                         // 2. Verify the old PIN (GCM-authenticated DEK unwrap, no stored
-                        //    verifier). The unwrapped DEK is kept for step 4 — a single
+                        //    verifier). The unwrapped DEK is kept for step 3 — a single
                         //    PBKDF2 derivation for the whole change (NEW-12).
                         var oldDek: ByteArray? = null
                         try {
@@ -250,25 +258,11 @@ class PinRepositoryImpl(
                             }
                         }
 
-                        // 3. Re-encrypt every stored mnemonic to the new PIN — a single
-                        //    DB transaction, so a failure rolls back and the old PIN still works.
-                        try {
-                            walletRepository.reencryptMnemonicsInTransaction { _, record ->
-                                reencryptMnemonic(record, oldPin, newPin)
-                            }
-                        } catch (e: CancellationException) {
-                            oldDek.wipe()
-                            throw e
-                        } catch (e: Exception) {
-                            oldDek.wipe()
-                            return@withLock ChangePinResult.Failed(
-                                "Failed to re-encrypt wallet mnemonics: ${e.message}"
-                            )
-                        }
-
-                        // 4. Switch the DEK envelope to the new PIN last — smallest
-                        //    failure window. Any exception (hardware key failure) is
-                        //    treated as a wrap failure so the rollback always runs (NEW-5).
+                        // 3. Switch the DEK envelope to the new PIN — the mnemonic is stored
+                        //    plaintext in the SQLCipher database and needs no re-keying
+                        //    (the new DEK encrypts it as soon as the DB is rewritten).
+                        //    Any exception (hardware key failure) is treated as a wrap
+                        //    failure so the change is aborted (NEW-5).
                         val rewrapped = try {
                             keyManager.rewrapDekWithDek(oldDek, newPin)
                         } catch (e: CancellationException) {
@@ -280,16 +274,9 @@ class PinRepositoryImpl(
                             oldDek.wipe()
                         }
                         if (!rewrapped) {
-                            // Best-effort rollback of the mnemonic re-encryption.
-                            try {
-                                walletRepository.reencryptMnemonicsInTransaction { _, record ->
-                                    reencryptMnemonic(record, newPin, oldPin)
-                                }
-                            } catch (_: Exception) {
-                            }
                             ChangePinResult.Failed("Failed to update PIN key material")
                         } else {
-                            // 5. Success — the old PIN verified, so clear the attempt counters.
+                            // 4. Success — the old PIN verified, so clear the attempt counters.
                             val resetData = gate.data.copy(
                                 failedAttempts = 0,
                                 lockedUntil = 0L,
@@ -310,26 +297,6 @@ class PinRepositoryImpl(
                 result
             }
         }
-
-    /**
-     * Decrypts a wallet mnemonic with [decryptPin] and re-encrypts it with
-     * [encryptPin]. Throws on corruption so the enclosing DB transaction rolls back.
-     */
-    private fun reencryptMnemonic(
-        record: com.ultrabytecoder.kryptakeep.domain.model.MnemonicRecord,
-        decryptPin: CharArray,
-        encryptPin: CharArray
-    ): Pair<ByteArray, ByteArray>? {
-        val encrypted = record.encryptedMnemonic ?: return null
-        val storedSalt = record.mnemonicSalt ?: return null
-        var plain: ByteArray? = null
-        try {
-            plain = MnemonicCipher.decrypt(encrypted, decryptPin, storedSalt).plain
-            return MnemonicCipher.encrypt(plain, encryptPin)
-        } finally {
-            plain?.wipe()
-        }
-    }
 
     override suspend fun resetLockState() = withContext(Dispatchers.Default) {
         mutex.withLock {

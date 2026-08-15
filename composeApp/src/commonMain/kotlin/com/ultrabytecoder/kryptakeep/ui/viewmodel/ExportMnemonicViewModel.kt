@@ -10,6 +10,7 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.GetMnemonicUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
 import com.ultrabytecoder.kryptakeep.security.SessionLockNotifier
 import com.ultrabytecoder.kryptakeep.security.wipe
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -137,7 +138,7 @@ class ExportMnemonicViewModel(
         viewModelScope.launch {
             try {
                 when (val result = verifyPinUseCase(pin)) {
-                    is VerifyResult.Success -> loadMnemonic(pin)
+                    is VerifyResult.Success -> loadMnemonic()
                     is VerifyResult.WrongPin -> updateAuth {
                         it.copy(
                             isProcessing = false,
@@ -163,7 +164,7 @@ class ExportMnemonicViewModel(
                         _state.value = State.Error("PIN data is corrupted. Wallet recovery is required.")
                     }
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) {
+            } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 updateAuth {
@@ -180,21 +181,20 @@ class ExportMnemonicViewModel(
     }
 
     /**
-     * Decrypts the mnemonic with the just-verified [pinChars]. Must run inside the
-     * caller's coroutine: [pinChars] is wiped by the caller once this returns.
+     * Loads the stored (plaintext) mnemonic after a successful PIN verification.
      */
-    private suspend fun loadMnemonic(pinChars: CharArray) {
+    private suspend fun loadMnemonic() {
         val previous = _state.value
         if (previous is State.Loaded) {
             previous.mnemonic.wipe()
         }
         _state.value = State.Loading
         try {
-            val mnemonic = getMnemonic(walletId, pinChars)
+            val mnemonic = getMnemonic(walletId)
             _state.value = if (mnemonic != null) {
                 State.Loaded(mnemonic)
             } else {
-                State.NotAvailable("Mnemonic could not be decrypted with this PIN or was not stored when this wallet was created.")
+                State.NotAvailable("Mnemonic was not stored when this wallet was created.")
             }
         } catch (e: Exception) {
             _state.value = State.Error(e.message ?: "Failed to load mnemonic")

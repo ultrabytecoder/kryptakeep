@@ -2,8 +2,7 @@ CREATE TABLE wallets (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     name TEXT NOT NULL,
     master_seed BLOB NOT NULL,
-    encrypted_mnemonic BLOB,
-    mnemonic_salt BLOB
+    mnemonic BLOB
 );
 
 selectAllWallets:
@@ -13,8 +12,8 @@ selectWalletById:
 SELECT * FROM wallets WHERE id = ?;
 
 insertWallet:
-INSERT OR REPLACE INTO wallets(id, name, master_seed, encrypted_mnemonic, mnemonic_salt)
-VALUES (?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO wallets(id, name, master_seed, mnemonic)
+VALUES (?, ?, ?, ?);
 
 lastInsertRowId:
 SELECT last_insert_rowid();
@@ -27,12 +26,6 @@ DELETE FROM wallets;
 
 renameWallet:
 UPDATE wallets SET name = ? WHERE id = ?;
-
-updateMnemonic:
-UPDATE wallets SET encrypted_mnemonic = ?, mnemonic_salt = ? WHERE id = ?;
-
-selectWalletsWithMnemonic:
-SELECT id, encrypted_mnemonic, mnemonic_salt FROM wallets WHERE encrypted_mnemonic IS NOT NULL;
 
 CREATE TABLE accounts (
     id TEXT PRIMARY KEY NOT NULL,

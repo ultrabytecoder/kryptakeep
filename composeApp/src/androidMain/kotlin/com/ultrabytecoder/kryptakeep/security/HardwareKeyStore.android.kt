@@ -3,7 +3,9 @@ package com.ultrabytecoder.kryptakeep.security
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.security.keystore.StrongBoxUnavailableException
 import java.security.KeyStore
+import java.security.ProviderException
 import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -33,37 +35,40 @@ actual object HardwareKeyStore {
             val keyGenerator = KeyGenerator.getInstance(
                 KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore"
             )
-            val baseSpec = KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .setUserAuthenticationRequired(false)
-                .setInvalidatedByBiometricEnrollment(false)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                try {
-                    keyGenerator.init(baseSpec.setIsStrongBoxBacked(true).build())
-                    keyGenerator.generateKey()
-                } catch (_: Exception) {
-                    // StrongBox unavailable or key generation failed (e.g.
-                    // StrongBoxUnavailableException, ProviderException) — fall back
-                    // to the TEE. Delete any partial alias left by the failed attempt.
-                    try {
-                        keyStore.deleteEntry(KEY_ALIAS)
-                    } catch (_: Exception) {
-                    }
-                    keyGenerator.init(baseSpec.build())
-                    keyGenerator.generateKey()
-                }
-            } else {
-                keyGenerator.init(baseSpec.build())
-                keyGenerator.generateKey()
-            }
+            generateWithFallback(keyGenerator, tryStrongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
         }
         (keyStore.getEntry(KEY_ALIAS, null) as KeyStore.SecretKeyEntry).secretKey
+    }
+
+    private fun generateWithFallback(keyGenerator: KeyGenerator, tryStrongBox: Boolean) {
+        try {
+            keyGenerator.init(buildSpec(strongBox = tryStrongBox))
+            keyGenerator.generateKey()
+        } catch (e: Exception) {
+            if (!tryStrongBox) throw e
+            val isStrongBoxFailure = e is StrongBoxUnavailableException || e is ProviderException
+            if (!isStrongBoxFailure) throw e
+            try {
+                keyStore.deleteEntry(KEY_ALIAS)
+            } catch (_: Exception) {
+            }
+            keyGenerator.init(buildSpec(strongBox = false))
+            keyGenerator.generateKey()
+        }
+    }
+
+    private fun buildSpec(strongBox: Boolean): KeyGenParameterSpec {
+        val builder = KeyGenParameterSpec.Builder(
+            KEY_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .setUserAuthenticationRequired(false)
+            .setInvalidatedByBiometricEnrollment(false)
+        if (strongBox) builder.setIsStrongBoxBacked(true)
+        return builder.build()
     }
 
     actual fun encrypt(plaintext: ByteArray): ByteArray {

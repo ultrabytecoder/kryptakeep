@@ -1,7 +1,6 @@
 package com.ultrabytecoder.kryptakeep.domain.usecase
 
 import com.ultrabytecoder.kryptakeep.domain.repository.WalletRepository
-import com.ultrabytecoder.kryptakeep.security.MnemonicCipher
 import com.ultrabytecoder.kryptakeep.security.wipe
 import fr.acinq.bitcoin.MnemonicCode
 
@@ -9,13 +8,9 @@ import fr.acinq.bitcoin.MnemonicCode
  * Creates a wallet. Requires an already unlocked session (the PIN wizard runs first,
  * so the SQLCipher database is open before any wallet exists).
  *
- * master_seed is stored as a plain BLOB — the SQLCipher database itself provides
- * encryption at rest. The mnemonic, however, is wrapped with a KEK derived from the
- * user's PIN via PBKDF2 (independent of the database DEK), so a wrong PIN yields no
- * mnemonic even when the database is already unlocked, and the mnemonic survives
- * DB-level compromise only if the PIN is also known. The mnemonic PBKDF2 salt is
- * hardware-wrapped before storage ([MnemonicCipher]), so offline PIN brute-force
- * against the mnemonic requires the device key.
+ * Both master_seed and the mnemonic are stored as plain BLOBs — the SQLCipher
+ * database itself provides encryption at rest (DEK wrapped by the PIN and the
+ * device hardware key, see [com.ultrabytecoder.kryptakeep.security.KeyManager]).
  */
 class CreateWalletUseCase(
     private val walletRepository: WalletRepository
@@ -23,8 +18,7 @@ class CreateWalletUseCase(
     suspend operator fun invoke(
         name: String,
         mnemonic: CharArray,
-        passphrase: CharArray = CharArray(0),
-        pin: CharArray
+        passphrase: CharArray = CharArray(0)
     ): Long {
         // ACCEPTED RISK (NEW-11): the MnemonicCode library API only accepts String,
         // so the recovery phrase (and passphrase) must be materialized as immutable
@@ -37,23 +31,16 @@ class CreateWalletUseCase(
 
         var seed: ByteArray? = null
         var mnemonicBytes: ByteArray? = null
-        var encryptedMnemonic: ByteArray? = null
-        var storedSalt: ByteArray? = null
 
         return try {
             MnemonicCode.validate(mnemonicStr)
             seed = MnemonicCode.toSeed(mnemonicStr, passphraseStr)
             mnemonicBytes = mnemonicStr.encodeToByteArray()
-            val (encrypted, salt) = MnemonicCipher.encrypt(mnemonicBytes, pin)
-            encryptedMnemonic = encrypted
-            storedSalt = salt
 
-            walletRepository.insertWallet(name, seed, encryptedMnemonic, storedSalt)
+            walletRepository.insertWallet(name, seed, mnemonicBytes)
         } finally {
             seed?.wipe()
             mnemonicBytes?.wipe()
-            encryptedMnemonic?.wipe()
-            storedSalt?.wipe()
         }
     }
 }

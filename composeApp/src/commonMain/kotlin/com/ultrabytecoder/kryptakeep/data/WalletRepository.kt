@@ -2,7 +2,6 @@ package com.ultrabytecoder.kryptakeep.data
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
-import com.ultrabytecoder.kryptakeep.domain.model.MnemonicRecord
 import com.ultrabytecoder.kryptakeep.domain.model.WalletInfo
 import com.ultrabytecoder.kryptakeep.domain.repository.WalletRepository as WalletRepositoryInterface
 import kotlinx.coroutines.Dispatchers
@@ -29,13 +28,12 @@ class WalletRepository(private val databaseProvider: DatabaseProvider) : WalletR
         queries.selectWalletById(id).executeAsOneOrNull()?.master_seed
     }
 
-    override suspend fun insertWallet(name: String, masterSeed: ByteArray, encryptedMnemonic: ByteArray?, mnemonicSalt: ByteArray?): Long = withContext(Dispatchers.IO) {
+    override suspend fun insertWallet(name: String, masterSeed: ByteArray, mnemonic: ByteArray?): Long = withContext(Dispatchers.IO) {
         queries.insertWallet(
             id = null,
             name = name,
             master_seed = masterSeed,
-            encrypted_mnemonic = encryptedMnemonic,
-            mnemonic_salt = mnemonicSalt
+            mnemonic = mnemonic
         )
         queries.lastInsertRowId().executeAsOne()
     }
@@ -46,39 +44,14 @@ class WalletRepository(private val databaseProvider: DatabaseProvider) : WalletR
         }
     }
 
-    override suspend fun getMnemonicRecord(id: Long): MnemonicRecord? = withContext(Dispatchers.IO) {
-        queries.selectWalletById(id).executeAsOneOrNull()?.let {
-            MnemonicRecord(it.encrypted_mnemonic, it.mnemonic_salt)
-        }
+    override suspend fun getStoredMnemonic(id: Long): ByteArray? = withContext(Dispatchers.IO) {
+        queries.selectWalletById(id).executeAsOneOrNull()?.mnemonic
     }
 
     override suspend fun renameWallet(id: Long, name: String) {
         withContext(Dispatchers.IO) {
             queries.renameWallet(name, id)
         }
-    }
-
-    override suspend fun updateMnemonic(id: Long, encryptedMnemonic: ByteArray, mnemonicSalt: ByteArray) {
-        withContext(Dispatchers.IO) {
-            queries.updateMnemonic(encryptedMnemonic, mnemonicSalt, id)
-        }
-    }
-
-    override suspend fun reencryptMnemonicsInTransaction(
-        transform: (walletId: Long, record: MnemonicRecord) -> Pair<ByteArray, ByteArray>?
-    ): Int = withContext(Dispatchers.IO) {
-        var updated = 0
-        databaseProvider.database().transaction {
-            queries.selectWalletsWithMnemonic().executeAsList().forEach { row ->
-                val newMaterial = transform(
-                    row.id,
-                    MnemonicRecord(row.encrypted_mnemonic, row.mnemonic_salt)
-                ) ?: return@forEach
-                queries.updateMnemonic(newMaterial.first, newMaterial.second, row.id)
-                updated++
-            }
-        }
-        updated
     }
 
     private fun com.ultrabytecoder.kryptakeep.db.Wallets.toWalletInfo(): WalletInfo = WalletInfo(

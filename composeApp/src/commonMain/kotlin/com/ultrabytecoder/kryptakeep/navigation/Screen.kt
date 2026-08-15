@@ -7,6 +7,9 @@ sealed interface Screen {
     data object Startup : Screen
 
     @Serializable
+    data object Welcome : Screen
+
+    @Serializable
     data object CreateWallet : Screen
 
     @Serializable
