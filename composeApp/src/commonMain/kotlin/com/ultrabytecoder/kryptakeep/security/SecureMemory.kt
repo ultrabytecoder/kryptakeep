@@ -15,3 +15,14 @@ expect fun ByteArray.wipe()
 
 /** See [ByteArray.wipe]. */
 expect fun CharArray.wipe()
+
+/**
+ * Best-effort garbage collection hint. Used to shorten the lifetime of secret
+ * material that cannot be wiped (e.g. the immutable Strings a third-party API
+ * forces us to materialize): the copies are already unreachable, this simply
+ * asks the collector to reclaim them sooner.
+ *
+ * - Android/JVM: `System.gc()` (a hint; ART may ignore it).
+ * - iOS: `kotlin.native.runtime.GC.collect()` (forces a collection pass).
+ */
+expect fun gcHint()

@@ -181,7 +181,8 @@ class ExportMnemonicViewModel(
     }
 
     /**
-     * Loads the stored (plaintext) mnemonic after a successful PIN verification.
+     * Loads the stored mnemonic (hardware-key-wrapped at rest) after a successful
+     * PIN verification.
      */
     private suspend fun loadMnemonic() {
         val previous = _state.value

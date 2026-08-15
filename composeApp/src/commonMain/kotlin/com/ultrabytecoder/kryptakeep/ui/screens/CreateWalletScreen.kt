@@ -18,6 +18,7 @@ import org.kotlincrypto.random.CryptoRand
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
+import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CreateWalletViewModel
 import kotlinx.coroutines.launch
 
@@ -28,15 +29,26 @@ fun CreateWalletScreen(
     viewModel: CreateWalletViewModel
 ) {
     var walletName by remember { mutableStateOf("") }
-    var mnemonic by remember { mutableStateOf("") }
+    // Secrets live in wipe-able CharArray-backed state holders instead of raw
+    // immutable Strings (NEW-11): the buffers are zeroed when the screen leaves
+    // composition or once the wallet was created.
+    val mnemonicState = remember { SecureTextFieldState() }
     var mnemonicError by remember { mutableStateOf<String?>(null) }
     var passphraseError by remember { mutableStateOf<String?>(null) }
 
     var usePassphrase by remember { mutableStateOf(false) }
-    var passphrase by remember { mutableStateOf("") }
+    val passphraseState = remember { SecureTextFieldState() }
     var passphraseVisible by remember { mutableStateOf(false) }
-    var passphraseConfirm by remember { mutableStateOf("") }
+    val passphraseConfirmState = remember { SecureTextFieldState() }
     var passphraseConfirmVisible by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            mnemonicState.wipe()
+            passphraseState.wipe()
+            passphraseConfirmState.wipe()
+        }
+    }
 
     val scope = rememberCoroutineScope()
 
@@ -78,9 +90,9 @@ fun CreateWalletScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             OutlinedTextField(
-                value = mnemonic,
+                value = mnemonicState.text,
                 onValueChange = {
-                    mnemonic = it
+                    mnemonicState.update(it)
                     mnemonicError = null
                 },
                 label = { Text("Mnemonic") },
@@ -95,7 +107,7 @@ fun CreateWalletScreen(
             TextButton(
                 onClick = {
                     val entropy = CryptoRand.Default.nextBytes(ByteArray(32))
-                    mnemonic = MnemonicCode.toMnemonics(entropy).joinToString(" ")
+                    mnemonicState.update(MnemonicCode.toMnemonics(entropy).joinToString(" "))
                     mnemonicError = null
                 },
                 modifier = Modifier.align(Alignment.End)
@@ -112,8 +124,8 @@ fun CreateWalletScreen(
                     .clickable {
                         usePassphrase = !usePassphrase
                         if (!usePassphrase) {
-                            passphrase = ""
-                            passphraseConfirm = ""
+                            passphraseState.wipe()
+                            passphraseConfirmState.wipe()
                             passphraseError = null
                         }
                     }
@@ -151,8 +163,8 @@ fun CreateWalletScreen(
                 }
 
                 OutlinedTextField(
-                    value = passphrase,
-                    onValueChange = { passphrase = it; passphraseError = null },
+                    value = passphraseState.text,
+                    onValueChange = { passphraseState.update(it); passphraseError = null },
                     label = { Text("Passphrase") },
                     singleLine = true,
                     visualTransformation = if (passphraseVisible) VisualTransformation.None
@@ -178,8 +190,8 @@ fun CreateWalletScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 OutlinedTextField(
-                    value = passphraseConfirm,
-                    onValueChange = { passphraseConfirm = it; passphraseError = null },
+                    value = passphraseConfirmState.text,
+                    onValueChange = { passphraseConfirmState.update(it); passphraseError = null },
                     label = { Text("Confirm passphrase") },
                     singleLine = true,
                     visualTransformation = if (passphraseConfirmVisible) VisualTransformation.None
@@ -210,24 +222,26 @@ fun CreateWalletScreen(
                     mnemonicError = null
                     passphraseError = null
 
-                    if (usePassphrase && passphrase != passphraseConfirm) {
+                    if (usePassphrase && passphraseState.text != passphraseConfirmState.text) {
                         passphraseError = "Passphrases do not match"
                         return@Button
                     }
 
-                    val effectivePassphrase = if (usePassphrase) passphrase else ""
+                    val mnemonicChars = mnemonicState.trimmedCopy()
+                    val passphraseChars = if (usePassphrase) passphraseState.toCharArray() else CharArray(0)
 
                     scope.launch {
                         // Secrets are handed to the ViewModel as wipe-able CharArrays;
                         // the ViewModel wipes them once the use case consumed them.
-                        val mnemonicChars = mnemonic.trim().toCharArray()
-                        val passphraseChars = effectivePassphrase.toCharArray()
                         when (val result = viewModel.createWallet(
                             name = walletName.trim(),
                             mnemonic = mnemonicChars,
                             passphrase = passphraseChars
                         )) {
                             is CreateWalletViewModel.Result.Success -> {
+                                mnemonicState.wipe()
+                                passphraseState.wipe()
+                                passphraseConfirmState.wipe()
                                 onWalletCreated(result.walletId)
                             }
                             is CreateWalletViewModel.Result.Error -> {
@@ -237,8 +251,8 @@ fun CreateWalletScreen(
                     }
                 },
                 enabled = walletName.isNotBlank()
-                    && mnemonic.isNotBlank()
-                    && (!usePassphrase || passphrase.isNotBlank()),
+                    && mnemonicState.text.isNotBlank()
+                    && (!usePassphrase || passphraseState.text.isNotBlank()),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
             ) {

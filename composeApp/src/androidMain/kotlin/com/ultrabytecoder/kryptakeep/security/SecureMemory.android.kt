@@ -23,3 +23,8 @@ actual fun CharArray.wipe() {
     charArraySink = this
     charArraySink = null
 }
+
+actual fun gcHint() {
+    // Best-effort hint on ART/HotSpot; may be ignored.
+    System.gc()
+}

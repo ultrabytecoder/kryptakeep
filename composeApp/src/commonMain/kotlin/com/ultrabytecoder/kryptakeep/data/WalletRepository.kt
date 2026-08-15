@@ -4,6 +4,8 @@ import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
 import com.ultrabytecoder.kryptakeep.domain.model.WalletInfo
 import com.ultrabytecoder.kryptakeep.domain.repository.WalletRepository as WalletRepositoryInterface
+import com.ultrabytecoder.kryptakeep.security.SecretCipher
+import com.ultrabytecoder.kryptakeep.security.wipe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.Flow
@@ -25,15 +27,34 @@ class WalletRepository(private val databaseProvider: DatabaseProvider) : WalletR
     }
 
     override suspend fun getMasterSeed(id: Long): ByteArray? = withContext(Dispatchers.IO) {
-        queries.selectWalletById(id).executeAsOneOrNull()?.master_seed
+        val stored = queries.selectWalletById(id).executeAsOneOrNull()?.master_seed
+            ?: return@withContext null
+        when (val result = SecretCipher.decrypt(stored)) {
+            is SecretCipher.Result.Encrypted -> {
+                stored.wipe()
+                result.plaintext
+            }
+            is SecretCipher.Result.Legacy -> {
+                // Best-effort lazy migration of pre-hardware-encryption installs:
+                // re-wrap in place; on failure the legacy plaintext stays usable.
+                val encrypted = SecretCipher.encrypt(result.plaintext)
+                try {
+                    queries.updateMasterSeed(encrypted, id)
+                } catch (_: Exception) {
+                } finally {
+                    encrypted.wipe()
+                }
+                result.plaintext
+            }
+        }
     }
 
     override suspend fun insertWallet(name: String, masterSeed: ByteArray, mnemonic: ByteArray?): Long = withContext(Dispatchers.IO) {
         queries.insertWallet(
             id = null,
             name = name,
-            master_seed = masterSeed,
-            mnemonic = mnemonic
+            master_seed = SecretCipher.encrypt(masterSeed),
+            mnemonic = mnemonic?.let { SecretCipher.encrypt(it) }
         )
         queries.lastInsertRowId().executeAsOne()
     }
@@ -45,7 +66,26 @@ class WalletRepository(private val databaseProvider: DatabaseProvider) : WalletR
     }
 
     override suspend fun getStoredMnemonic(id: Long): ByteArray? = withContext(Dispatchers.IO) {
-        queries.selectWalletById(id).executeAsOneOrNull()?.mnemonic
+        val stored = queries.selectWalletById(id).executeAsOneOrNull()?.mnemonic
+            ?: return@withContext null
+        when (val result = SecretCipher.decrypt(stored)) {
+            is SecretCipher.Result.Encrypted -> {
+                stored.wipe()
+                result.plaintext
+            }
+            is SecretCipher.Result.Legacy -> {
+                // Best-effort lazy migration of pre-hardware-encryption installs:
+                // re-wrap in place; on failure the legacy plaintext stays usable.
+                val encrypted = SecretCipher.encrypt(result.plaintext)
+                try {
+                    queries.updateMnemonic(encrypted, id)
+                } catch (_: Exception) {
+                } finally {
+                    encrypted.wipe()
+                }
+                result.plaintext
+            }
+        }
     }
 
     override suspend fun renameWallet(id: Long, name: String) {

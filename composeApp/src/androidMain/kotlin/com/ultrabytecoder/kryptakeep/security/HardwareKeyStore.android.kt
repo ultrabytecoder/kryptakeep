@@ -46,7 +46,9 @@ actual object HardwareKeyStore {
             keyGenerator.generateKey()
         } catch (e: Exception) {
             if (!tryStrongBox) throw e
-            val isStrongBoxFailure = e is StrongBoxUnavailableException || e is ProviderException
+            val isStrongBoxFailure =
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && e is StrongBoxUnavailableException) ||
+                    e is ProviderException
             if (!isStrongBoxFailure) throw e
             try {
                 keyStore.deleteEntry(KEY_ALIAS)
@@ -67,7 +69,9 @@ actual object HardwareKeyStore {
             .setKeySize(256)
             .setUserAuthenticationRequired(false)
             .setInvalidatedByBiometricEnrollment(false)
-        if (strongBox) builder.setIsStrongBoxBacked(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && strongBox) {
+            builder.setIsStrongBoxBacked(true)
+        }
         return builder.build()
     }
 

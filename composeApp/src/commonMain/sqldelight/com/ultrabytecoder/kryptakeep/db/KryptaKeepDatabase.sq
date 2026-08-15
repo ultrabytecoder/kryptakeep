@@ -27,6 +27,12 @@ DELETE FROM wallets;
 renameWallet:
 UPDATE wallets SET name = ? WHERE id = ?;
 
+updateMnemonic:
+UPDATE wallets SET mnemonic = ? WHERE id = ?;
+
+updateMasterSeed:
+UPDATE wallets SET master_seed = ? WHERE id = ?;
+
 CREATE TABLE accounts (
     id TEXT PRIMARY KEY NOT NULL,
     wallet_id INTEGER NOT NULL,

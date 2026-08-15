@@ -4,6 +4,7 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.usePinned
+import kotlin.native.runtime.GC
 import platform.posix.memset_s
 
 /**
@@ -25,4 +26,9 @@ actual fun CharArray.wipe() {
         // Char is 2 bytes (UTF-16).
         memset_s(pinned.addressOf(0), (size * 2).convert(), 0, (size * 2).convert())
     }
+}
+
+actual fun gcHint() {
+    // Kotlin/Native: forces a collection pass.
+    GC.collect()
 }
