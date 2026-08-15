@@ -1,11 +1,20 @@
 package com.ultrabytecoder.kryptakeep
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.window.ComposeUIViewController
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.di.appModule
 import com.ultrabytecoder.kryptakeep.di.platformModule
+import com.ultrabytecoder.kryptakeep.platform.IosScreenshotProtector
+import com.ultrabytecoder.kryptakeep.security.SessionLockNotifier
+import com.ultrabytecoder.kryptakeep.security.SessionManager
 import org.koin.compose.KoinApplication
+import org.koin.compose.koinInject
 import platform.Foundation.NSBundle
+import platform.Foundation.NSNotificationCenter
+import platform.Foundation.NSObjectProtocol
+import platform.UIKit.UIApplicationWillResignActiveNotification
 
 fun MainViewController() = ComposeUIViewController {
     KoinApplication(
@@ -14,6 +23,28 @@ fun MainViewController() = ComposeUIViewController {
             modules(appModule(NetworkConfig.testnet(apiKey)), platformModule)
         }
     ) {
+        // The app is resigning active (app switcher, background): lock the session
+        // (close the DB, zero the DEK) and tell the UI to return to the PIN screen.
+        // The IosScreenshotProtector shows a synchronous black overlay window on
+        // resign-active — the system captures the app-switcher snapshot BEFORE the
+        // async SwiftUI scenePhase overlay can render, so only the UIKit overlay
+        // guarantees the snapshot is obscured (NEW-10).
+        val sessionManager: SessionManager = koinInject()
+        DisposableEffect(Unit) {
+            val protector = IosScreenshotProtector().also { it.enable() }
+            val observer: NSObjectProtocol? = NSNotificationCenter.defaultCenter.addObserverForName(
+                name = UIApplicationWillResignActiveNotification,
+                `object` = null,
+                queue = null
+            ) { _ ->
+                sessionManager.lock()
+                SessionLockNotifier.notifyLocked()
+            }
+            onDispose {
+                observer?.let { NSNotificationCenter.defaultCenter.removeObserver(it) }
+                protector.disable()
+            }
+        }
         App()
     }
 }

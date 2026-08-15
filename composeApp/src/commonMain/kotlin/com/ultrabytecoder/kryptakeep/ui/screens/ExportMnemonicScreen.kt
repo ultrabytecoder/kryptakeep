@@ -49,8 +49,6 @@ import compose.icons.feathericons.Check
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
-import compose.icons.feathericons.Shield
-import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.platform.preventScreenshots
 import com.ultrabytecoder.kryptakeep.security.wipe
@@ -62,8 +60,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun ExportMnemonicScreen(
     navController: NavController,
-    viewModel: ExportMnemonicViewModel,
-    biometricRepository: BiometricRepository
+    viewModel: ExportMnemonicViewModel
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var mnemonicVisible by remember { mutableStateOf(false) }
@@ -74,6 +71,10 @@ fun ExportMnemonicScreen(
         if (copied) {
             delay(2000)
             copied = false
+            // NEW-7: clear the copied recovery phrase from the system clipboard
+            // shortly after copying, so it does not linger for other apps to read.
+            delay(28_000)
+            clipboardManager.setText(AnnotatedString(""))
         }
     }
 
@@ -99,7 +100,6 @@ fun ExportMnemonicScreen(
             when (state) {
                 is ExportMnemonicViewModel.State.AuthRequired -> {
                     val auth = state as ExportMnemonicViewModel.State.AuthRequired
-                    val isBiometricEnabled by biometricRepository.isBiometricEnabled.collectAsStateWithLifecycle()
 
                     // Shake animation — triggers on each new shakeTriggerId
                     val shakeAnimatable = remember { Animatable(0f) }
@@ -141,22 +141,8 @@ fun ExportMnemonicScreen(
 
                             Spacer(modifier = Modifier.height(32.dp))
 
-                            if (isBiometricEnabled) {
-                                IconButton(
-                                    onClick = { viewModel.triggerBiometric() },
-                                    enabled = !auth.isLocked && !auth.isProcessing
-                                ) {
-                                    Icon(
-                                        FeatherIcons.Shield,
-                                        contentDescription = "Use biometric verification",
-                                        modifier = Modifier.size(32.dp),
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-
                             PinDotsInline(
-                                enteredLength = auth.enteredPin.length,
+                                enteredLength = auth.enteredPinLength,
                                 pinLength = PinConfig.LENGTH,
                                 modifier = Modifier.offset { IntOffset(shakeOffset.toInt(), 0) }
                             )
@@ -185,7 +171,7 @@ fun ExportMnemonicScreen(
                         }
 
                         Numpad(
-                            onDigitClick = { viewModel.addDigit(it.toString()) },
+                            onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
                             onDeleteClick = { viewModel.removeDigit() },
                             isLocked = auth.isLocked || auth.isProcessing
                         )
@@ -211,7 +197,10 @@ fun ExportMnemonicScreen(
                             viewModel.clearSensitiveData()
                         }
                     }
-                    val mnemonicText = mnemonic.concatToString()
+                    // Materialize the immutable String only while the phrase is actually
+                    // displayed (NEW-7): it cannot be wiped, so it should not exist
+                    // while the phrase is hidden.
+                    val mnemonicText = if (mnemonicVisible) mnemonic.concatToString() else null
 
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -272,7 +261,7 @@ fun ExportMnemonicScreen(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = if (mnemonicVisible) mnemonicText else "\u2022".repeat(mnemonic.size),
+                                text = mnemonicText ?: "\u2022".repeat(mnemonic.size),
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.Medium,
                                 maxLines = if (mnemonicVisible) 10 else 1,
@@ -285,8 +274,10 @@ fun ExportMnemonicScreen(
 
                     OutlinedButton(
                         onClick = {
-                            clipboardManager.setText(AnnotatedString(mnemonicText))
-                            copied = true
+                            mnemonicText?.let {
+                                clipboardManager.setText(AnnotatedString(it))
+                                copied = true
+                            }
                         },
                         enabled = mnemonicVisible,
                         modifier = Modifier.fillMaxWidth(),

@@ -18,6 +18,9 @@ qr = "0.3.0"
 bitcoin-kmp = "0.30.0"
 kotlinx-serialization = "1.8.0"
 sqldelight = "2.3.2"
+sqlcipher = "4.17.0"
+androidx-sqlite = "2.6.2"
+yet300-sqlcipher = "0.1.0"
 koin = "4.0.0"
 ktor = "3.1.3"
 coroutines = "1.10.1"
@@ -51,6 +54,9 @@ sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sq
 sqldelight-coroutines-extensions = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "sqldelight" }
 sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
 sqldelight-native-driver = { module = "app.cash.sqldelight:native-driver", version.ref = "sqldelight" }
+sqlcipher-android = { module = "net.zetetic:sqlcipher-android", version.ref = "sqlcipher" }
+androidx-sqlite = { module = "androidx.sqlite:sqlite", version.ref = "androidx-sqlite" }
+yet300-sqlcipher-driver = { module = "io.github.yet300:sqlcipher-driver", version.ref = "yet300-sqlcipher" }
 # Koin
 koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
 koin-compose = { module = "io.insert-koin:koin-compose", version.ref = "koin" }

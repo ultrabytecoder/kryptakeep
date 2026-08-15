@@ -8,18 +8,14 @@ import com.ultrabytecoder.kryptakeep.domain.repository.VerifyResult
 import com.ultrabytecoder.kryptakeep.domain.usecase.CheckPinStatusUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetWalletsUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncUseCase
-import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
-import com.ultrabytecoder.kryptakeep.domain.service.BiometricService
 import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
 import com.ultrabytecoder.kryptakeep.providers.SyncMode
 import com.ultrabytecoder.kryptakeep.security.wipe
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 data class EnterPinState(
-    val enteredPin: String = "",
+    val enteredPinLength: Int = 0,
     val errorMessage: String? = null,
     val isLocked: Boolean = false,
     val lockSecondsRemaining: Int = 0,
@@ -30,20 +26,26 @@ data class EnterPinState(
 
 sealed class EnterPinEvent {
     data class NavigateToAccountsList(val walletId: Long) : EnterPinEvent()
+    data object NavigateToCreateWallet : EnterPinEvent()
     data object NavigateToRecovery : EnterPinEvent()
 }
 
+/**
+ * The entered PIN is accumulated in a wipe-able [CharArray] buffer instead of
+ * immutable Strings, so intermediate values never linger on the heap.
+ */
 class EnterPinViewModel(
     private val verifyPinUseCase: VerifyPinUseCase,
     private val getWalletsUseCase: GetWalletsUseCase,
     private val syncUseCase: SyncUseCase,
-    checkPinStatus: CheckPinStatusUseCase,
-    private val biometricRepository: BiometricRepository,
-    private val biometricService: BiometricService
+    checkPinStatus: CheckPinStatusUseCase
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(EnterPinState())
     val state: StateFlow<EnterPinState> = _state.asStateFlow()
+
+    private val buffer = CharArray(PinConfig.LENGTH)
+    private var bufferLength = 0
 
     private val _events = MutableSharedFlow<EnterPinEvent>(
         replay = 0,
@@ -51,8 +53,6 @@ class EnterPinViewModel(
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
     )
     val events: Flow<EnterPinEvent> = _events
-
-    private val biometricMutex = Mutex()
 
     init {
         // Observe repository pin state changes — recompute lock from lockedUntil each time
@@ -108,97 +108,56 @@ class EnterPinViewModel(
                 }
             }
         }
+    }
 
-        // Auto-trigger biometric unlock if enabled — only after PIN state is loaded and not locked
-        viewModelScope.launch {
-            biometricMutex.withLock {
-                val firstState = checkPinStatus().first()
-                if (firstState is PinState.Setup && !firstState.isLocked && biometricRepository.isBiometricEnabled.value) {
-                    val token = biometricRepository.authenticate(biometricService)
-                    try {
-                        if (token != null) {
-                            val walletId = getWalletsUseCase().first().firstOrNull()?.id
-                            if (walletId != null) {
-                                syncUseCase(viewModelScope, walletId, SyncMode.FULL)
-                                _events.emit(EnterPinEvent.NavigateToAccountsList(walletId))
-                            }
-                        }
-                    } finally {
-                        token?.wipe()
-                    }
-                }
-            }
+    /** Routes to the main screen, or to wallet creation when no wallet exists yet. */
+    private suspend fun navigateAfterUnlock() {
+        val walletId = getWalletsUseCase().first().firstOrNull()?.id
+        if (walletId != null) {
+            syncUseCase(viewModelScope, walletId, SyncMode.FULL)
+            _events.emit(EnterPinEvent.NavigateToAccountsList(walletId))
+        } else {
+            _events.emit(EnterPinEvent.NavigateToCreateWallet)
         }
     }
 
-    fun triggerBiometric() {
-        viewModelScope.launch {
-            if (_state.value.isLocked) return@launch
-            if (!biometricRepository.isBiometricEnabled.value) return@launch
-            biometricMutex.withLock {
-                val token = biometricRepository.authenticate(biometricService)
-                try {
-                    if (token != null) {
-                        val walletId = getWalletsUseCase().first().firstOrNull()?.id
-                        if (walletId != null) {
-                            syncUseCase(viewModelScope, walletId, SyncMode.FULL)
-                            _events.emit(EnterPinEvent.NavigateToAccountsList(walletId))
-                        }
-                    }
-                } finally {
-                    token?.wipe()
-                }
-            }
-        }
-    }
-
-    fun addDigit(digit: String) {
+    fun addDigit(digit: Char) {
         val s = _state.value
         if (s.isLocked) return
         if (s.isProcessing) return
-        if (s.enteredPin.length >= PinConfig.LENGTH) return
+        if (bufferLength >= PinConfig.LENGTH) return
 
-        val newPin = s.enteredPin + digit
-        _state.update { it.copy(enteredPin = newPin, errorMessage = null) }
+        buffer[bufferLength++] = digit
+        _state.update { it.copy(enteredPinLength = bufferLength, errorMessage = null) }
 
-        if (newPin.length == PinConfig.LENGTH) {
-            verifyPin(newPin)
+        if (bufferLength == PinConfig.LENGTH) {
+            verifyPin()
         }
     }
 
     fun removeDigit() {
-        _state.update { s ->
-            if (s.enteredPin.isEmpty()) s
-            else s.copy(enteredPin = s.enteredPin.dropLast(1))
-        }
+        if (bufferLength == 0) return
+        buffer[--bufferLength] = '\u0000'
+        _state.update { it.copy(enteredPinLength = bufferLength) }
     }
 
-    private fun verifyPin(pin: String) {
-        _state.update { it.copy(isProcessing = true, enteredPin = "") }
+    private fun verifyPin() {
+        val pin = buffer.copyOf()
+        buffer.wipe()
+        bufferLength = 0
+        _state.update { it.copy(isProcessing = true, enteredPinLength = 0) }
         viewModelScope.launch {
-            val pinChars = pin.toCharArray()
             try {
-                when (val result = verifyPinUseCase(pinChars)) {
+                when (val result = verifyPinUseCase(pin)) {
                     is VerifyResult.Success -> {
-                        val walletId = getWalletsUseCase().first().firstOrNull()?.id
-                        if (walletId != null) {
-                            _state.update { it.copy(isProcessing = false) }
-                            syncUseCase(viewModelScope, walletId, SyncMode.FULL)
-                            _events.emit(EnterPinEvent.NavigateToAccountsList(walletId))
-                        } else {
-                            _state.update {
-                                it.copy(
-                                    isProcessing = false,
-                                    errorMessage = "Wallet not found"
-                                )
-                            }
-                        }
+                        _state.update { it.copy(isProcessing = false) }
+                        navigateAfterUnlock()
                     }
                     is VerifyResult.WrongPin -> {
                         _state.update {
                             it.copy(
                                 isProcessing = false,
-                                enteredPin = "",
+                                enteredPinLength = 0,
                                 shakeTriggerId = it.shakeTriggerId + 1,
                                 errorMessage = "Incorrect PIN (${result.remainingAttempts} remaining)"
                             )
@@ -210,7 +169,7 @@ class EnterPinViewModel(
                         _state.update {
                             it.copy(
                                 isProcessing = false,
-                                enteredPin = "",
+                                enteredPinLength = 0,
                                 isLocked = true,
                                 lockedUntil = result.lockedUntil,
                                 lockSecondsRemaining = remaining,
@@ -229,13 +188,19 @@ class EnterPinViewModel(
                 _state.update {
                     it.copy(
                         isProcessing = false,
-                        enteredPin = "",
+                        enteredPinLength = 0,
                         errorMessage = e.message ?: "Verification failed"
                     )
                 }
             } finally {
-                pinChars.wipe()
+                pin.wipe()
             }
         }
+    }
+
+    override fun onCleared() {
+        buffer.wipe()
+        bufferLength = 0
+        super.onCleared()
     }
 }

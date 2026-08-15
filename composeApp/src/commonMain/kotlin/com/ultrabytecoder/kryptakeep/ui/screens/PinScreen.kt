@@ -15,9 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import compose.icons.FeatherIcons
-import compose.icons.feathericons.Shield
 import compose.icons.feathericons.X
-import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.navigation.Screen
 import com.ultrabytecoder.kryptakeep.ui.components.Numpad
@@ -36,9 +34,12 @@ fun PinScreenSetup(
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
-            if (event is SetupPinEvent.NavigateToAccountsList) {
-                navController.navigate(Screen.AccountsList(event.walletId)) {
-                    popUpTo(0) { inclusive = true }
+            when (event) {
+                SetupPinEvent.NavigateToCreateWallet -> {
+                    // PIN set, session open — no wallet exists yet, go create one.
+                    navController.navigate(Screen.CreateWallet) {
+                        popUpTo(0) { inclusive = true }
+                    }
                 }
             }
         }
@@ -84,7 +85,7 @@ fun PinScreenSetup(
                 Spacer(modifier = Modifier.height(32.dp))
 
                 PinDotsInline(
-                    enteredLength = state.enteredPin.length,
+                    enteredLength = state.enteredPinLength,
                     pinLength = PinConfig.LENGTH
                 )
 
@@ -105,7 +106,7 @@ if (state.isProcessing) {
             }
 
             Numpad(
-                onDigitClick = { viewModel.addDigit(it.toString()) },
+                onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
                 onDeleteClick = { viewModel.removeDigit() },
                 isLocked = state.isLocked || state.isProcessing
             )
@@ -117,11 +118,9 @@ if (state.isProcessing) {
 @Composable
 fun PinScreenEnter(
     navController: NavController,
-    viewModel: EnterPinViewModel,
-    biometricRepository: BiometricRepository
+    viewModel: EnterPinViewModel
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val isBiometricEnabled by biometricRepository.isBiometricEnabled.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -131,9 +130,16 @@ fun PinScreenEnter(
                         popUpTo(0) { inclusive = true }
                     }
                 }
-                is EnterPinEvent.NavigateToRecovery -> {
-                    // Blob corrupted — reset to wallet creation flow
+                EnterPinEvent.NavigateToCreateWallet -> {
+                    // Session unlocked but no wallet exists yet (PIN was set before
+                    // wallet creation and the app was restarted) — go create one.
                     navController.navigate(Screen.CreateWallet) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+                is EnterPinEvent.NavigateToRecovery -> {
+                    // Key material corrupted — re-setup the PIN (fresh DEK, new DB).
+                    navController.navigate(Screen.SetupPin) {
                         popUpTo(0) { inclusive = true }
                     }
                 }
@@ -191,23 +197,8 @@ fun PinScreenEnter(
 
                 Spacer(modifier = Modifier.height(32.dp))
 
-                // Biometric re-trigger button (only shown when biometric is enabled)
-                if (isBiometricEnabled) {
-                    IconButton(
-                        onClick = { viewModel.triggerBiometric() },
-                        enabled = !state.isLocked && !state.isProcessing
-                    ) {
-                        Icon(
-                            FeatherIcons.Shield,
-                            contentDescription = "Use biometric unlock",
-                            modifier = Modifier.size(32.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-
                 PinDotsInline(
-                    enteredLength = state.enteredPin.length,
+                    enteredLength = state.enteredPinLength,
                     pinLength = PinConfig.LENGTH,
                     modifier = Modifier.offset { IntOffset(shakeOffset.toInt(), 0) }
                 )
@@ -236,7 +227,7 @@ fun PinScreenEnter(
             }
 
             Numpad(
-                onDigitClick = { viewModel.addDigit(it.toString()) },
+                onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
                 onDeleteClick = { viewModel.removeDigit() },
                 isLocked = state.isLocked || state.isProcessing
             )

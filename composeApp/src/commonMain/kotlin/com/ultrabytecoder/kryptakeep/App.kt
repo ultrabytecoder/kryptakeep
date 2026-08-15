@@ -10,6 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -27,6 +28,7 @@ import com.ultrabytecoder.kryptakeep.ui.screens.PinScreenSetup
 import com.ultrabytecoder.kryptakeep.ui.screens.SendScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.SettingsScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.CustomNodesScreen
+import com.ultrabytecoder.kryptakeep.ui.screens.ChangePinScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.TransactionSentScreen
 import com.ultrabytecoder.kryptakeep.ui.theme.KryptaKeepTheme
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.AccountDetailsViewModel
@@ -42,6 +44,7 @@ import com.ultrabytecoder.kryptakeep.ui.viewmodel.SetupPinViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.EnterPinViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SettingsViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CustomNodesViewModel
+import com.ultrabytecoder.kryptakeep.ui.viewmodel.ChangePinViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupState
 import com.ultrabytecoder.kryptakeep.domain.repository.PinState
@@ -65,25 +68,37 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.DeleteWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.RenameWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SetupPinUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
-import com.ultrabytecoder.kryptakeep.domain.repository.BiometricRepository
+import com.ultrabytecoder.kryptakeep.domain.usecase.ChangePinUseCase
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
-import com.ultrabytecoder.kryptakeep.domain.service.BiometricService
-import com.ultrabytecoder.kryptakeep.domain.service.rememberBiometricService
+import com.ultrabytecoder.kryptakeep.security.SessionLockNotifier
 
 @Composable
 fun App() {
     KryptaKeepTheme {
         val navController = rememberNavController()
 
+        // Session locked (app backgrounded, see SessionLockNotifier): return to the
+        // startup wizard, which routes to the PIN unlock (or recovery) screen.
+        LaunchedEffect(Unit) {
+            SessionLockNotifier.locked.collect {
+                // Guard against redundant navigations when the lock fires repeatedly
+                // (e.g. rapid background/foreground): if we are already on the startup
+                // screen, there is nothing to do (NEW-9).
+                if (navController.currentDestination?.hasRoute(Screen.Startup::class) != true) {
+                    navController.navigate(Screen.Startup) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            }
+        }
+
         NavHost(
             navController = navController,
             startDestination = Screen.Startup
         ) {
             composable<Screen.Startup> {
-                val getWallets: GetWalletsUseCase = koinInject()
-                val syncUseCase: SyncUseCase = koinInject()
                 val checkPinStatus: CheckPinStatusUseCase = koinInject()
-                val viewModel = remember { StartupViewModel(getWallets, syncUseCase, checkPinStatus) }
+                val viewModel = remember { StartupViewModel(checkPinStatus) }
                 val currentState by viewModel.state.collectAsStateWithLifecycle()
 
                 when (currentState) {
@@ -93,13 +108,6 @@ fun App() {
                             contentAlignment = Alignment.Center
                         ) {
                             CircularProgressIndicator()
-                        }
-                    }
-                    is StartupState.NeedsWallet -> {
-                        LaunchedEffect(currentState) {
-                            navController.navigate(Screen.CreateWallet) {
-                                popUpTo(Screen.Startup) { inclusive = true }
-                            }
                         }
                     }
                     is StartupState.NeedsPinSetup -> {
@@ -120,23 +128,13 @@ fun App() {
             }
             composable<Screen.CreateWallet> {
                 val createWallet: CreateWalletUseCase = koinInject()
-                val checkPinStatus: CheckPinStatusUseCase = koinInject()
                 val viewModel = remember { CreateWalletViewModel(createWallet) }
-                val pinState by checkPinStatus()
-                    .collectAsStateWithLifecycle(initialValue = PinState.Loading)
 
                 CreateWalletScreen(
                     onWalletCreated = { walletId ->
-                        val ps = pinState
-                        val destination = when (ps) {
-                            is PinState.NotSetup -> Screen.SetupPin
-                            is PinState.Setup -> {
-                                if (ps.isCorrupted) Screen.SetupPin
-                                else Screen.AccountsList(walletId)
-                            }
-                            PinState.Loading -> Screen.AccountsList(walletId)
-                        }
-                        navController.navigate(destination) {
+                        // The PIN is always set up BEFORE wallet creation (startup wizard),
+                        // so the session is open and we can go straight to the main screen.
+                        navController.navigate(Screen.AccountsList(walletId)) {
                             popUpTo(0) { inclusive = true }
                         }
                     },
@@ -229,15 +227,12 @@ fun App() {
                 val getMnemonic: GetMnemonicUseCase = koinInject()
                 val verifyPin: VerifyPinUseCase = koinInject()
                 val checkPinStatus: CheckPinStatusUseCase = koinInject()
-                val biometricService = rememberBiometricService()
-                val biometricRepository: BiometricRepository = koinInject()
                 val viewModel = remember(route.walletId) {
                     ExportMnemonicViewModel(
-                        route.walletId, getMnemonic, verifyPin, checkPinStatus,
-                        biometricRepository, biometricService
+                        route.walletId, getMnemonic, verifyPin, checkPinStatus
                     )
                 }
-                ExportMnemonicScreen(navController, viewModel, biometricRepository)
+                ExportMnemonicScreen(navController, viewModel)
             }
             composable<Screen.ManageWallets> {
                 val getWallets: GetWalletsUseCase = koinInject()
@@ -250,30 +245,26 @@ fun App() {
             }
             composable<Screen.SetupPin> {
                 val setupPin: SetupPinUseCase = koinInject()
-                val getWallets: GetWalletsUseCase = koinInject()
-                val syncUseCase: SyncUseCase = koinInject()
-                val viewModel = remember { SetupPinViewModel(setupPin, getWallets, syncUseCase) }
+                val viewModel = remember { SetupPinViewModel(setupPin) }
                 PinScreenSetup(navController, viewModel)
             }
             composable<Screen.EnterPin> {
-                val biometricService = rememberBiometricService()
-                val biometricRepository: BiometricRepository = koinInject()
-
                 val verifyPin: VerifyPinUseCase = koinInject()
                 val getWallets: GetWalletsUseCase = koinInject()
                 val syncUseCase: SyncUseCase = koinInject()
                 val checkPinStatus: CheckPinStatusUseCase = koinInject()
-                val viewModel = remember { EnterPinViewModel(verifyPin, getWallets, syncUseCase, checkPinStatus, biometricRepository, biometricService) }
-                PinScreenEnter(navController, viewModel, biometricRepository)
+                val viewModel = remember { EnterPinViewModel(verifyPin, getWallets, syncUseCase, checkPinStatus) }
+                PinScreenEnter(navController, viewModel)
             }
             composable<Screen.Settings> {
-                val biometricService = rememberBiometricService()
-                val biometricRepository: BiometricRepository = koinInject()
-
-                val verifyPin: VerifyPinUseCase = koinInject()
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
-                val viewModel = remember { SettingsViewModel(verifyPin, biometricRepository, biometricService, settingsStorage) }
+                val viewModel = remember { SettingsViewModel(settingsStorage) }
                 SettingsScreen(navController, viewModel)
+            }
+            composable<Screen.ChangePin> {
+                val changePin: ChangePinUseCase = koinInject()
+                val viewModel = remember { ChangePinViewModel(changePin) }
+                ChangePinScreen(navController, viewModel)
             }
             composable<Screen.CustomNodes> {
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()

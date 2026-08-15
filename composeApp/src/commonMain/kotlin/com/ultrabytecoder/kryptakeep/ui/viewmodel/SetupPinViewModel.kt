@@ -3,17 +3,14 @@ package com.ultrabytecoder.kryptakeep.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
-import com.ultrabytecoder.kryptakeep.domain.usecase.GetWalletsUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SetupPinUseCase
-import com.ultrabytecoder.kryptakeep.domain.usecase.SyncUseCase
-import com.ultrabytecoder.kryptakeep.providers.SyncMode
 import com.ultrabytecoder.kryptakeep.security.wipe
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 data class SetupPinState(
-    val enteredPin: String = "",
+    val enteredPinLength: Int = 0,
     val isConfirming: Boolean = false,
     val isProcessing: Boolean = false,
     val errorMessage: String? = null,
@@ -22,20 +19,27 @@ data class SetupPinState(
 )
 
 sealed class SetupPinEvent {
-    data class NavigateToAccountsList(val walletId: Long) : SetupPinEvent()
+    data object NavigateToCreateWallet : SetupPinEvent()
 }
 
+/**
+ * PIN setup runs FIRST in the startup wizard — before any wallet exists. After the PIN
+ * is set, the session is open and the app always proceeds to wallet creation.
+ *
+ * The PIN is accumulated in a wipe-able [CharArray] buffer instead of immutable
+ * Strings, so intermediate values never linger on the heap.
+ */
 class SetupPinViewModel(
-    private val setupPinUseCase: SetupPinUseCase,
-    private val getWalletsUseCase: GetWalletsUseCase,
-    private val syncUseCase: SyncUseCase
+    private val setupPinUseCase: SetupPinUseCase
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SetupPinState())
     val state: StateFlow<SetupPinState> = _state.asStateFlow()
 
-    // Keep firstPin as a private var — never exposed in UI state
-    private var firstPin: String = ""
+    // First-entry PIN, kept as a private wipe-able buffer — never exposed in UI state.
+    private val firstPin = CharArray(PinConfig.LENGTH)
+    private val buffer = CharArray(PinConfig.LENGTH)
+    private var bufferLength = 0
 
     private val _events = MutableSharedFlow<SetupPinEvent>(
         replay = 0,
@@ -44,72 +48,62 @@ class SetupPinViewModel(
     )
     val events: Flow<SetupPinEvent> = _events
 
-    fun addDigit(digit: String) {
+    fun addDigit(digit: Char) {
         val s = _state.value
         if (s.isProcessing) return
-        if (s.enteredPin.length >= PinConfig.LENGTH) return
+        if (bufferLength >= PinConfig.LENGTH) return
 
-        val newPin = s.enteredPin + digit
+        buffer[bufferLength++] = digit
+        _state.update { it.copy(enteredPinLength = bufferLength, errorMessage = null) }
 
-        if (newPin.length == PinConfig.LENGTH) {
+        if (bufferLength == PinConfig.LENGTH) {
             if (s.isConfirming) {
-                confirmPin(newPin)
+                confirmPin()
             } else {
-                firstPin = newPin
+                buffer.copyInto(firstPin)
+                buffer.wipe()
+                bufferLength = 0
                 _state.update {
                     it.copy(
                         isConfirming = true,
-                        enteredPin = "",
+                        enteredPinLength = 0,
                         errorMessage = null
                     )
                 }
             }
-        } else {
-            _state.update { it.copy(enteredPin = newPin, errorMessage = null) }
         }
     }
 
     fun removeDigit() {
-        _state.update { s ->
-            if (s.enteredPin.isEmpty()) s
-            else s.copy(enteredPin = s.enteredPin.dropLast(1))
-        }
+        if (bufferLength == 0) return
+        buffer[--bufferLength] = '\u0000'
+        _state.update { it.copy(enteredPinLength = bufferLength) }
     }
 
-    private fun confirmPin(confirmPin: String) {
-        if (confirmPin != firstPin) {
+    private fun confirmPin() {
+        val matches = buffer.contentEquals(firstPin)
+        buffer.wipe()
+        bufferLength = 0
+        if (!matches) {
+            firstPin.wipe()
             _state.update {
                 it.copy(
                     isConfirming = false,
-                    enteredPin = "",
+                    enteredPinLength = 0,
                     errorMessage = "PINs do not match. Try again."
                 )
             }
-            firstPin = ""
             return
         }
 
-        _state.update { it.copy(isProcessing = true) }
+        val pinChars = firstPin.copyOf()
+        firstPin.wipe()
+        _state.update { it.copy(isProcessing = true, enteredPinLength = 0) }
         viewModelScope.launch {
-            val pinChars = confirmPin.toCharArray()
             try {
                 setupPinUseCase(pinChars)
-                val walletId = getWalletsUseCase().first().firstOrNull()?.id
-                if (walletId != null) {
-                    _state.update { it.copy(isProcessing = false) }
-                    syncUseCase(viewModelScope, walletId, SyncMode.FULL)
-                    _events.emit(SetupPinEvent.NavigateToAccountsList(walletId))
-                } else {
-                    _state.update {
-                        it.copy(
-                            isConfirming = false,
-                            isProcessing = false,
-                            enteredPin = "",
-                            errorMessage = "Wallet not found"
-                        )
-                    }
-                    firstPin = ""
-                }
+                _state.update { it.copy(isProcessing = false) }
+                _events.emit(SetupPinEvent.NavigateToCreateWallet)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -117,14 +111,20 @@ class SetupPinViewModel(
                     it.copy(
                         isConfirming = false,
                         isProcessing = false,
-                        enteredPin = "",
+                        enteredPinLength = 0,
                         errorMessage = e.message ?: "Failed to set PIN"
                     )
                 }
-                firstPin = ""
             } finally {
                 pinChars.wipe()
             }
         }
+    }
+
+    override fun onCleared() {
+        buffer.wipe()
+        firstPin.wipe()
+        bufferLength = 0
+        super.onCleared()
     }
 }

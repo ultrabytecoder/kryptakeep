@@ -2,7 +2,8 @@ CREATE TABLE wallets (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     name TEXT NOT NULL,
     master_seed BLOB NOT NULL,
-    encrypted_mnemonic BLOB
+    encrypted_mnemonic BLOB,
+    mnemonic_salt BLOB
 );
 
 selectAllWallets:
@@ -12,8 +13,8 @@ selectWalletById:
 SELECT * FROM wallets WHERE id = ?;
 
 insertWallet:
-INSERT OR REPLACE INTO wallets(id, name, master_seed, encrypted_mnemonic)
-VALUES (?, ?, ?, ?);
+INSERT OR REPLACE INTO wallets(id, name, master_seed, encrypted_mnemonic, mnemonic_salt)
+VALUES (?, ?, ?, ?, ?);
 
 lastInsertRowId:
 SELECT last_insert_rowid();
@@ -24,11 +25,14 @@ DELETE FROM wallets WHERE id = ?;
 deleteAllWallets:
 DELETE FROM wallets;
 
-selectEncryptedMnemonicById:
-SELECT encrypted_mnemonic FROM wallets WHERE id = ?;
-
 renameWallet:
 UPDATE wallets SET name = ? WHERE id = ?;
+
+updateMnemonic:
+UPDATE wallets SET encrypted_mnemonic = ?, mnemonic_salt = ? WHERE id = ?;
+
+selectWalletsWithMnemonic:
+SELECT id, encrypted_mnemonic, mnemonic_salt FROM wallets WHERE encrypted_mnemonic IS NOT NULL;
 
 CREATE TABLE accounts (
     id TEXT PRIMARY KEY NOT NULL,
@@ -43,7 +47,7 @@ CREATE TABLE accounts (
     symbol TEXT NOT NULL,
     parent_account_id TEXT,
     token_address TEXT,
-    FOREIGN KEY (wallet_id) REFERENCES wallets(id),
+    FOREIGN KEY (wallet_id) REFERENCES wallets(id) ON DELETE CASCADE,
     FOREIGN KEY (parent_account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
 

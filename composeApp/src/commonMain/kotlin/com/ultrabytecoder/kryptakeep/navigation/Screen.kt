@@ -48,5 +48,8 @@ sealed interface Screen {
     data object Settings : Screen
 
     @Serializable
+    data object ChangePin : Screen
+
+    @Serializable
     data object CustomNodes : Screen
 }

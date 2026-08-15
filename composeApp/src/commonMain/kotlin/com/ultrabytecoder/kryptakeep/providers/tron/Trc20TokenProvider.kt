@@ -231,7 +231,7 @@ class Trc20TokenProvider(
     }
 
     private suspend fun estimateEnergyForTransfer(accountId: String): Long {
-        val now = System.currentTimeMillis()
+        val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
         if (energyCacheAccountId == accountId && energyCacheValue != null && now - energyCacheTime < ENERGY_CACHE_TTL_MS) {
             return energyCacheValue!!
         }

@@ -14,9 +14,25 @@ sealed interface PinState {
     }
 }
 
+/**
+ * Result of a PIN change attempt.
+ */
+sealed class ChangePinResult {
+    data object Success : ChangePinResult()
+    data object WrongOldPin : ChangePinResult()
+    data class Locked(val lockedUntil: Long) : ChangePinResult()
+    data class Failed(val message: String) : ChangePinResult()
+}
+
 interface PinRepository {
     val pinStateFlow: StateFlow<PinState>
     suspend fun setupPin(pin: CharArray)
     suspend fun verifyPin(pin: CharArray): VerifyResult
     suspend fun resetLockState()
+
+    /**
+     * Changes the PIN: verifies [oldPin], re-wraps the DEK envelope with [newPin]
+     * and re-encrypts every stored mnemonic with [newPin] (all-or-nothing).
+     */
+    suspend fun changePin(oldPin: CharArray, newPin: CharArray): ChangePinResult
 }

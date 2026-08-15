@@ -44,11 +44,12 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
             implementation(libs.sqldelight.android.driver)
+            implementation(libs.sqlcipher.android)
+            implementation(libs.androidx.sqlite)
             implementation(libs.koin.android)
             implementation(libs.ktor.client.okhttp)
             implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.23.0")
             implementation("com.journeyapps:zxing-android-embedded:4.3.0")
-            implementation("androidx.biometric:biometric:1.1.0")
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
@@ -98,6 +99,7 @@ kotlin {
         }
         iosMain.dependencies {
             implementation(libs.sqldelight.native.driver)
+            implementation(libs.yet300.sqlcipher.driver)
             implementation(libs.ktor.client.darwin)
         }
         commonTest.dependencies {
@@ -191,5 +193,8 @@ sqldelight {
             packageName.set("com.ultrabytecoder.kryptakeep.db")
         }
     }
+    // SQLCipher (yet300 driver) provides its own sqlite3_* symbols on Apple targets —
+    // do not link the system SQLite or the encrypted binary would be mislinked.
+    linkSqlite.set(false)
 }
 

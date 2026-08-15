@@ -2,7 +2,6 @@ package com.ultrabytecoder.kryptakeep.data
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
-import com.ultrabytecoder.kryptakeep.db.KryptaKeepDatabase
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
 import com.ultrabytecoder.kryptakeep.domain.model.AccountType
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository as AccountRepositoryInterface
@@ -12,8 +11,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-class AccountRepository(database: KryptaKeepDatabase) : AccountRepositoryInterface {
-    private val queries = database.kryptaKeepDatabaseQueries
+class AccountRepository(private val databaseProvider: DatabaseProvider) : AccountRepositoryInterface {
+    private val queries get() = databaseProvider.database().kryptaKeepDatabaseQueries
 
     override fun getAccountsByWalletFlow(walletId: Long): Flow<List<AccountInfo>> {
         return queries.selectByWalletId(walletId)

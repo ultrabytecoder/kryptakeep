@@ -18,6 +18,7 @@ import org.kotlincrypto.random.CryptoRand
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
+import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CreateWalletViewModel
 import kotlinx.coroutines.launch
 
@@ -37,6 +38,10 @@ fun CreateWalletScreen(
     var passphraseVisible by remember { mutableStateOf(false) }
     var passphraseConfirm by remember { mutableStateOf("") }
     var passphraseConfirmVisible by remember { mutableStateOf(false) }
+
+    var pin by remember { mutableStateOf("") }
+    var pinVisible by remember { mutableStateOf(false) }
+    var pinError by remember { mutableStateOf<String?>(null) }
 
     val scope = rememberCoroutineScope()
 
@@ -102,6 +107,40 @@ fun CreateWalletScreen(
             ) {
                 Text("Generate new")
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = pin,
+                onValueChange = { pin = it.filter { c -> c.isDigit() }.take(PinConfig.LENGTH); pinError = null },
+                label = { Text("PIN") },
+                singleLine = true,
+                isError = pinError != null,
+                supportingText = pinError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                visualTransformation = if (pinVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.NumberPassword,
+                    autoCorrectEnabled = false
+                ),
+                trailingIcon = {
+                    IconButton(onClick = { pinVisible = !pinVisible }) {
+                        Icon(
+                            imageVector = if (pinVisible) FeatherIcons.EyeOff else FeatherIcons.Eye,
+                            contentDescription = if (pinVisible) "Hide PIN" else "Show PIN"
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                "The recovery phrase is encrypted with this PIN. Without it, the phrase cannot be shown again.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -209,19 +248,31 @@ fun CreateWalletScreen(
                 onClick = {
                     mnemonicError = null
                     passphraseError = null
+                    pinError = null
 
                     if (usePassphrase && passphrase != passphraseConfirm) {
                         passphraseError = "Passphrases do not match"
                         return@Button
                     }
 
+                    if (pin.length != PinConfig.LENGTH || !pin.all { it.isDigit() }) {
+                        pinError = "Enter your ${PinConfig.LENGTH}-digit PIN"
+                        return@Button
+                    }
+
                     val effectivePassphrase = if (usePassphrase) passphrase else ""
 
                     scope.launch {
+                        // Secrets are handed to the ViewModel as wipe-able CharArrays;
+                        // the ViewModel wipes them once the use case consumed them.
+                        val mnemonicChars = mnemonic.trim().toCharArray()
+                        val passphraseChars = effectivePassphrase.toCharArray()
+                        val pinChars = pin.toCharArray()
                         when (val result = viewModel.createWallet(
                             name = walletName.trim(),
-                            mnemonic = mnemonic.trim(),
-                            passphrase = effectivePassphrase
+                            mnemonic = mnemonicChars,
+                            passphrase = passphraseChars,
+                            pin = pinChars
                         )) {
                             is CreateWalletViewModel.Result.Success -> {
                                 onWalletCreated(result.walletId)
