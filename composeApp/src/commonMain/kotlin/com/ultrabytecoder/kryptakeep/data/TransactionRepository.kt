@@ -34,6 +34,12 @@ class TransactionRepository(private val databaseProvider: DatabaseProvider) : Tr
             .executeAsOne()
     }
 
+    override suspend fun getTransactionById(id: String): TransactionInfo? = withContext(Dispatchers.IO) {
+        queries.selectTransactionById(id)
+            .executeAsOneOrNull()
+            ?.toTransactionInfo()
+    }
+
     override suspend fun upsertAll(transactions: List<TransactionInfo>) {
         withContext(Dispatchers.IO) {
             queries.transaction {

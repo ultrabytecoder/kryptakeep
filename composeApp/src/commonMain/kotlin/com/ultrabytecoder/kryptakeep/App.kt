@@ -30,6 +30,7 @@ import com.ultrabytecoder.kryptakeep.ui.screens.SettingsScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.CustomNodesScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.ChangePinScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.TransactionSentScreen
+import com.ultrabytecoder.kryptakeep.ui.screens.TransactionDetailsScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.WelcomeScreen
 import com.ultrabytecoder.kryptakeep.ui.theme.KryptaKeepTheme
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.AccountDetailsViewModel
@@ -44,6 +45,7 @@ import com.ultrabytecoder.kryptakeep.ui.viewmodel.SendViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SetupPinViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.EnterPinViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SettingsViewModel
+import com.ultrabytecoder.kryptakeep.ui.viewmodel.TransactionDetailsViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CustomNodesViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.ChangePinViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupViewModel
@@ -198,6 +200,15 @@ fun App() {
             composable<Screen.TransactionSent> { backStackEntry ->
                 val route = backStackEntry.toRoute<Screen.TransactionSent>()
                 TransactionSentScreen(navController, route.txId)
+            }
+            composable<Screen.TransactionDetails> { backStackEntry ->
+                val route = backStackEntry.toRoute<Screen.TransactionDetails>()
+                val transactionRepository: TransactionRepository = koinInject()
+                val getAccounts: GetAccountsUseCase = koinInject()
+                val viewModel = remember(route.txId) {
+                    TransactionDetailsViewModel(route.txId, transactionRepository, getAccounts)
+                }
+                TransactionDetailsScreen(navController, viewModel)
             }
             composable<Screen.CreateAccount> { backStackEntry ->
                 val route = backStackEntry.toRoute<Screen.CreateAccount>()

@@ -156,6 +156,9 @@ fun AccountDetailsScreen(
                     isLoadingMore = isLoadingMore,
                     hasMore = hasMore,
                     onLoadMore = { viewModel.loadNextPage() },
+                    onTransactionClick = { tx ->
+                        navController.navigate(Screen.TransactionDetails(tx.id))
+                    },
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -373,6 +376,7 @@ private fun TransactionListSection(
     isLoadingMore: Boolean,
     hasMore: Boolean,
     onLoadMore: () -> Unit,
+    onTransactionClick: (TransactionInfo) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -416,6 +420,7 @@ private fun TransactionListSection(
                 TransactionItem(
                     tx = tx,
                     accountType = accountType,
+                    onClick = { onTransactionClick(tx) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }

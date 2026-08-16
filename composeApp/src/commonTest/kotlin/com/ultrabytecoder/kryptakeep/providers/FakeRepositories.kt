@@ -51,6 +51,9 @@ class FakeTransactionRepository(
     override suspend fun getTransactionCount(accountId: String): Long =
         transactions.count { it.accountId == accountId }.toLong()
 
+    override suspend fun getTransactionById(id: String): TransactionInfo? =
+        transactions.find { it.id == id }
+
     override suspend fun upsertAll(newTransactions: List<TransactionInfo>) {
         for (tx in newTransactions) {
             val existingIndex = transactions.indexOfFirst { it.txHash == tx.txHash && it.accountId == tx.accountId }

@@ -25,6 +25,9 @@ sealed interface Screen {
     data class TransactionSent(val txId: String) : Screen
 
     @Serializable
+    data class TransactionDetails(val txId: String) : Screen
+
+    @Serializable
     data class CreateAccount(val walletId: Long) : Screen
 
     @Serializable

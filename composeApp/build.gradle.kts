@@ -50,6 +50,10 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
             implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.23.0")
             implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+            implementation("androidx.camera:camera-core:1.6.1")
+            implementation("androidx.camera:camera-camera2:1.6.1")
+            implementation("androidx.camera:camera-lifecycle:1.6.1")
+            implementation("androidx.camera:camera-view:1.6.1")
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)

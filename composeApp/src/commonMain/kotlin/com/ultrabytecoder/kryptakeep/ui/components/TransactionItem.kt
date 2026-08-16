@@ -11,8 +11,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import compose.icons.FeatherIcons
@@ -33,9 +31,9 @@ private val SelfColor = Color(0xFF9E9E9E)
 fun TransactionItem(
     tx: TransactionInfo,
     accountType: AccountType,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val clipboardManager = LocalClipboardManager.current
     val directionColor = when (tx.direction) {
         TransactionDirection.INCOMING -> IncomingColor
         TransactionDirection.OUTGOING -> OutgoingColor
@@ -51,7 +49,7 @@ fun TransactionItem(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable { clipboardManager.setText(AnnotatedString(tx.txHash)) },
+            .clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)),
         colors = CardDefaults.cardColors(
