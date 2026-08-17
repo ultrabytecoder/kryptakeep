@@ -3,6 +3,7 @@ package com.ultrabytecoder.kryptakeep.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
+import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.domain.usecase.SetupPinUseCase
 import com.ultrabytecoder.kryptakeep.security.wipe
 import kotlinx.coroutines.channels.BufferOverflow
@@ -37,8 +38,8 @@ class SetupPinViewModel(
     val state: StateFlow<SetupPinState> = _state.asStateFlow()
 
     // First-entry PIN, kept as a private wipe-able buffer — never exposed in UI state.
-    private val firstPin = CharArray(PinConfig.LENGTH)
-    private val buffer = CharArray(PinConfig.LENGTH)
+    private val firstPin = CharArray(PinConfig.PIN_LENGTH)
+    private val buffer = CharArray(PinConfig.PIN_LENGTH)
     private var bufferLength = 0
 
     private val _events = MutableSharedFlow<SetupPinEvent>(
@@ -51,12 +52,12 @@ class SetupPinViewModel(
     fun addDigit(digit: Char) {
         val s = _state.value
         if (s.isProcessing) return
-        if (bufferLength >= PinConfig.LENGTH) return
+        if (bufferLength >= PinConfig.PIN_LENGTH) return
 
         buffer[bufferLength++] = digit
         _state.update { it.copy(enteredPinLength = bufferLength, errorMessage = null) }
 
-        if (bufferLength == PinConfig.LENGTH) {
+        if (bufferLength == PinConfig.PIN_LENGTH) {
             if (s.isConfirming) {
                 confirmPin()
             } else {
@@ -101,7 +102,7 @@ class SetupPinViewModel(
         _state.update { it.copy(isProcessing = true, enteredPinLength = 0) }
         viewModelScope.launch {
             try {
-                setupPinUseCase(pinChars)
+                setupPinUseCase(pinChars, SecurityMethod.PIN)
                 _state.update { it.copy(isProcessing = false) }
                 _events.emit(SetupPinEvent.NavigateToCreateWallet)
             } catch (e: kotlinx.coroutines.CancellationException) {

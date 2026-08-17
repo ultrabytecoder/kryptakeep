@@ -3,7 +3,9 @@ package com.ultrabytecoder.kryptakeep.domain.repository
 import kotlin.time.Duration.Companion.minutes
 
 object PinConfig {
-    const val LENGTH = 8
+    const val PIN_LENGTH = 6
+    const val PASSWORD_MIN_LENGTH = 12
+    const val PASSWORD_MIN_CLASSES = 3
     const val MAX_ATTEMPTS = 5
     val INITIAL_LOCKOUT = 1.minutes
     val MAX_LOCKOUT = 60.minutes

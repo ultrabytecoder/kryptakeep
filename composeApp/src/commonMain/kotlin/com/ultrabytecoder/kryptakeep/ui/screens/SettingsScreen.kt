@@ -47,6 +47,7 @@ import compose.icons.feathericons.DollarSign
 import compose.icons.feathericons.Server
 import compose.icons.feathericons.Shield
 import com.ultrabytecoder.kryptakeep.domain.model.FiatCurrency
+import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.navigation.Screen
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SettingsViewModel
 
@@ -54,11 +55,15 @@ import com.ultrabytecoder.kryptakeep.ui.viewmodel.SettingsViewModel
 @Composable
 fun SettingsScreen(
     navController: NavController,
-    viewModel: SettingsViewModel
+    viewModel: SettingsViewModel,
+    securityMethod: SecurityMethod? = null
 ) {
     val fiatCurrency by viewModel.fiatCurrency.collectAsStateWithLifecycle()
 
     var currencyMenuExpanded by remember { mutableStateOf(false) }
+
+    val isPassword = securityMethod == SecurityMethod.PASSWORD
+    val credentialLabel = if (isPassword) "Password" else "PIN"
 
     Scaffold(
         topBar = {
@@ -119,13 +124,13 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Change PIN",
+                            "Change $credentialLabel",
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.Medium
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Update your lock PIN; recovery phrases are re-encrypted automatically",
+                            "Update your lock $credentialLabel; recovery phrases are re-encrypted automatically",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

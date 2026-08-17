@@ -2,11 +2,10 @@ package com.ultrabytecoder.kryptakeep.domain.usecase
 
 import com.ultrabytecoder.kryptakeep.domain.repository.PinRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
+import kotlinx.coroutines.flow.StateFlow
 
-class SetupPinUseCase(
+class GetSecurityMethodUseCase(
     private val pinRepository: PinRepository
 ) {
-    suspend operator fun invoke(pin: CharArray, method: SecurityMethod) {
-        pinRepository.setupPin(pin, method)
-    }
+    operator fun invoke(): StateFlow<SecurityMethod?> = pinRepository.securityMethodFlow
 }

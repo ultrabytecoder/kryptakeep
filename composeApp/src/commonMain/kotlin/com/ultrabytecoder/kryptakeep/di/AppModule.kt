@@ -28,6 +28,8 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.GetMnemonicUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.DeleteWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.RenameWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SendUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.GetSecurityMethodUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.SetSecurityMethodUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SetupPinUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncAccountUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncManager
@@ -71,6 +73,8 @@ fun appModule(networkConfig: NetworkConfig) = module {
 
     single<PinRepository> { PinRepositoryImpl(get(), get(), get(), get()) }
     factory { CheckPinStatusUseCase(get()) }
+    factory { GetSecurityMethodUseCase(get()) }
+    factory { SetSecurityMethodUseCase(get()) }
     factory { SetupPinUseCase(get()) }
     factory { VerifyPinUseCase(get()) }
     factory { ChangePinUseCase(get()) }

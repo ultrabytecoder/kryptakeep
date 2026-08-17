@@ -4,12 +4,17 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -17,8 +22,11 @@ import androidx.navigation.NavController
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.X
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
+import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.navigation.Screen
+import com.ultrabytecoder.kryptakeep.security.wipe
 import com.ultrabytecoder.kryptakeep.ui.components.Numpad
+import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.EnterPinEvent
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.EnterPinViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SetupPinEvent
@@ -77,7 +85,7 @@ fun PinScreenSetup(
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    if (state.isConfirming) "Re-enter the same PIN" else "Enter a ${PinConfig.LENGTH}-digit PIN",
+                    if (state.isConfirming) "Re-enter the same PIN" else "Enter a ${PinConfig.PIN_LENGTH}-digit PIN",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -86,7 +94,7 @@ fun PinScreenSetup(
 
                 PinDotsInline(
                     enteredLength = state.enteredPinLength,
-                    pinLength = PinConfig.LENGTH
+                    pinLength = PinConfig.PIN_LENGTH
                 )
 
 if (state.isProcessing) {
@@ -121,6 +129,24 @@ fun PinScreenEnter(
     viewModel: EnterPinViewModel
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val passwordField = remember { SecureTextFieldState() }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(state.securityMethod) {
+        if (state.securityMethod == SecurityMethod.PASSWORD) {
+            focusRequester.requestFocus()
+        }
+    }
+
+    LaunchedEffect(state.errorMessage, state.isProcessing) {
+        if (state.errorMessage != null || state.isProcessing) {
+            passwordField.update("")
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { passwordField.wipe() }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -131,7 +157,7 @@ fun PinScreenEnter(
                     }
                 }
                 EnterPinEvent.NavigateToCreateWallet -> {
-                    // Session unlocked but no wallet exists yet (PIN was set before
+                    // Session unlocked but no wallet exists yet (credential was set before
                     // wallet creation and the app was restarted) — go create one.
                     navController.navigate(Screen.CreateWallet) {
                         popUpTo(0) { inclusive = true }
@@ -165,6 +191,8 @@ fun PinScreenEnter(
     }
     val shakeOffset = shakeAnimatable.value
 
+    val isPassword = state.securityMethod == SecurityMethod.PASSWORD
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -178,14 +206,14 @@ fun PinScreenEnter(
                 .padding(paddingValues)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = if (isPassword) Arrangement.Center else Arrangement.SpaceBetween
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    "Enter your PIN",
+                    if (isPassword) "Enter your password" else "Enter your PIN",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Medium
                 )
@@ -197,11 +225,30 @@ fun PinScreenEnter(
 
                 Spacer(modifier = Modifier.height(32.dp))
 
-                PinDotsInline(
-                    enteredLength = state.enteredPinLength,
-                    pinLength = PinConfig.LENGTH,
-                    modifier = Modifier.offset { IntOffset(shakeOffset.toInt(), 0) }
-                )
+                if (isPassword) {
+                    OutlinedTextField(
+                        value = passwordField.text,
+                        onValueChange = {
+                            passwordField.update(it)
+                            viewModel.onPasswordInput(it)
+                        },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                            .offset { IntOffset(shakeOffset.toInt(), 0) },
+                        isError = state.errorMessage != null,
+                        enabled = !state.isLocked && !state.isProcessing
+                    )
+                } else {
+                    PinDotsInline(
+                        enteredLength = state.enteredPinLength,
+                        pinLength = PinConfig.PIN_LENGTH,
+                        modifier = Modifier.offset { IntOffset(shakeOffset.toInt(), 0) }
+                    )
+                }
 
                 if (state.isProcessing) {
                     Spacer(modifier = Modifier.height(16.dp))
@@ -226,11 +273,29 @@ fun PinScreenEnter(
                 }
             }
 
-            Numpad(
-                onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
-                onDeleteClick = { viewModel.removeDigit() },
-                isLocked = state.isLocked || state.isProcessing
-            )
+            if (isPassword) {
+                if (state.isProcessing) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                } else {
+                    Button(
+                        onClick = {
+                            viewModel.submitPassword()
+                        },
+                        enabled = !state.isLocked && passwordField.text.isNotBlank(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                    ) {
+                        Text("Unlock", style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            } else {
+                Numpad(
+                    onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
+                    onDeleteClick = { viewModel.removeDigit() },
+                    isLocked = state.isLocked || state.isProcessing
+                )
+            }
         }
     }
 }

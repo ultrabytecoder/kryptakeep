@@ -23,12 +23,14 @@ import com.ultrabytecoder.kryptakeep.ui.screens.AddTokenScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.CreateWalletScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.ExportMnemonicScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.ManageWalletsScreen
+import com.ultrabytecoder.kryptakeep.ui.screens.ChooseSecurityMethodScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.PinScreenEnter
 import com.ultrabytecoder.kryptakeep.ui.screens.PinScreenSetup
 import com.ultrabytecoder.kryptakeep.ui.screens.SendScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.SettingsScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.CustomNodesScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.ChangePinScreen
+import com.ultrabytecoder.kryptakeep.ui.screens.SetPasswordScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.TransactionSentScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.TransactionDetailsScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.WelcomeScreen
@@ -48,6 +50,7 @@ import com.ultrabytecoder.kryptakeep.ui.viewmodel.SettingsViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.TransactionDetailsViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CustomNodesViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.ChangePinViewModel
+import com.ultrabytecoder.kryptakeep.ui.viewmodel.SetPasswordViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupViewModel
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.StartupState
 import com.ultrabytecoder.kryptakeep.domain.repository.PinState
@@ -72,6 +75,8 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.RenameWalletUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SetupPinUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.ChangePinUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.GetSecurityMethodUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.SetSecurityMethodUseCase
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.security.SessionLockNotifier
 
@@ -131,6 +136,10 @@ fun App() {
             }
             composable<Screen.Welcome> {
                 WelcomeScreen(navController)
+            }
+            composable<Screen.ChooseSecurityMethod> {
+                val setMethod: SetSecurityMethodUseCase = koinInject()
+                ChooseSecurityMethodScreen(navController, setMethod)
             }
             composable<Screen.CreateWallet> {
                 val createWallet: CreateWalletUseCase = koinInject()
@@ -242,9 +251,10 @@ fun App() {
                 val getMnemonic: GetMnemonicUseCase = koinInject()
                 val verifyPin: VerifyPinUseCase = koinInject()
                 val checkPinStatus: CheckPinStatusUseCase = koinInject()
+                val getSecurityMethod: GetSecurityMethodUseCase = koinInject()
                 val viewModel = remember(route.walletId) {
                     ExportMnemonicViewModel(
-                        route.walletId, getMnemonic, verifyPin, checkPinStatus
+                        route.walletId, getMnemonic, verifyPin, checkPinStatus, getSecurityMethod
                     )
                 }
                 ExportMnemonicScreen(navController, viewModel)
@@ -263,22 +273,31 @@ fun App() {
                 val viewModel = remember { SetupPinViewModel(setupPin) }
                 PinScreenSetup(navController, viewModel)
             }
+            composable<Screen.SetupPassword> {
+                val setupPin: SetupPinUseCase = koinInject()
+                val viewModel = remember { SetPasswordViewModel(setupPin) }
+                SetPasswordScreen(navController, viewModel)
+            }
             composable<Screen.EnterPin> {
                 val verifyPin: VerifyPinUseCase = koinInject()
                 val getWallets: GetWalletsUseCase = koinInject()
                 val syncUseCase: SyncUseCase = koinInject()
                 val checkPinStatus: CheckPinStatusUseCase = koinInject()
-                val viewModel = remember { EnterPinViewModel(verifyPin, getWallets, syncUseCase, checkPinStatus) }
+                val getSecurityMethod: GetSecurityMethodUseCase = koinInject()
+                val viewModel = remember { EnterPinViewModel(verifyPin, getWallets, syncUseCase, checkPinStatus, getSecurityMethod) }
                 PinScreenEnter(navController, viewModel)
             }
             composable<Screen.Settings> {
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
+                val getSecurityMethod: GetSecurityMethodUseCase = koinInject()
                 val viewModel = remember { SettingsViewModel(settingsStorage) }
-                SettingsScreen(navController, viewModel)
+                val securityMethod by getSecurityMethod().collectAsStateWithLifecycle()
+                SettingsScreen(navController, viewModel, securityMethod)
             }
             composable<Screen.ChangePin> {
                 val changePin: ChangePinUseCase = koinInject()
-                val viewModel = remember { ChangePinViewModel(changePin) }
+                val getSecurityMethod: GetSecurityMethodUseCase = koinInject()
+                val viewModel = remember { ChangePinViewModel(changePin, getSecurityMethod) }
                 ChangePinScreen(navController, viewModel)
             }
             composable<Screen.CustomNodes> {

@@ -26,13 +26,15 @@ sealed class ChangePinResult {
 
 interface PinRepository {
     val pinStateFlow: StateFlow<PinState>
-    suspend fun setupPin(pin: CharArray)
+    val securityMethodFlow: StateFlow<SecurityMethod?>
+    suspend fun setupPin(pin: CharArray, method: SecurityMethod)
     suspend fun verifyPin(pin: CharArray): VerifyResult
     suspend fun resetLockState()
 
     /**
-     * Changes the PIN: verifies [oldPin], re-wraps the DEK envelope with [newPin]
+     * Changes the credential: verifies [oldPin], re-wraps the DEK envelope with [newPin]
      * and re-encrypts every stored mnemonic with [newPin] (all-or-nothing).
+     * [newMethod] is the security method the new credential uses.
      */
-    suspend fun changePin(oldPin: CharArray, newPin: CharArray): ChangePinResult
+    suspend fun changePin(oldPin: CharArray, newPin: CharArray, newMethod: SecurityMethod): ChangePinResult
 }

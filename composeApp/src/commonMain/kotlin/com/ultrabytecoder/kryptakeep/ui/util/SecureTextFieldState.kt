@@ -34,6 +34,13 @@ class SecureTextFieldState(initial: String = "") {
         text = newText
     }
 
+    /** Replaces the contents from a [CharArray], zeroing the previous buffer first. */
+    fun update(newChars: CharArray) {
+        buffer.wipe()
+        buffer = newChars.copyOf()
+        text = newChars.concatToString()
+    }
+
     /** Fresh copy of the current contents; the caller is responsible for wiping it. */
     fun toCharArray(): CharArray = buffer.copyOf()
 

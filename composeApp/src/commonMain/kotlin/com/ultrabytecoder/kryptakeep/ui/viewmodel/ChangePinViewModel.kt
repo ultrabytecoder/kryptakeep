@@ -4,8 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ultrabytecoder.kryptakeep.domain.repository.ChangePinResult
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
+import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.domain.usecase.ChangePinUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.CredentialValidator
+import com.ultrabytecoder.kryptakeep.domain.usecase.GetSecurityMethodUseCase
 import com.ultrabytecoder.kryptakeep.security.wipe
+import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -17,7 +21,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class ChangePinViewModel(
-    private val changePinUseCase: ChangePinUseCase
+    private val changePinUseCase: ChangePinUseCase,
+    getSecurityMethod: GetSecurityMethodUseCase
 ) : ViewModel() {
 
     enum class Stage { OldPin, NewPin, ConfirmNewPin }
@@ -26,7 +31,8 @@ class ChangePinViewModel(
         val stage: Stage = Stage.OldPin,
         val enteredLength: Int = 0,
         val isProcessing: Boolean = false,
-        val errorMessage: String? = null
+        val errorMessage: String? = null,
+        val securityMethod: SecurityMethod? = null
     )
 
     sealed class Event {
@@ -43,22 +49,39 @@ class ChangePinViewModel(
     )
     val events: Flow<Event> = _events.asSharedFlow()
 
-    // The three PINs are accumulated in wipe-able CharArray buffers — never
-    // immutable Strings, so the PINs do not linger on the heap (ARCH-1/SEC-1).
-    private val oldPinBuffer = CharArray(PinConfig.LENGTH)
-    private val newPinBuffer = CharArray(PinConfig.LENGTH)
-    private val confirmBuffer = CharArray(PinConfig.LENGTH)
+    // PIN buffers (wipe-able CharArray).
+    private val oldPinBuffer = CharArray(PinConfig.PIN_LENGTH)
+    private val newPinBuffer = CharArray(PinConfig.PIN_LENGTH)
+    private val confirmBuffer = CharArray(PinConfig.PIN_LENGTH)
     private var bufferLength = 0
+
+    // Password buffers (wipe-able via SecureTextFieldState).
+    private val oldPasswordBuffer = SecureTextFieldState()
+    private val newPasswordBuffer = SecureTextFieldState()
+    private val confirmPasswordBuffer = SecureTextFieldState()
+
+    private var currentMethod: SecurityMethod = SecurityMethod.PIN
+
+    init {
+        viewModelScope.launch {
+            getSecurityMethod().collect { method ->
+                if (method != null) {
+                    currentMethod = method
+                    _state.update { it.copy(securityMethod = method) }
+                }
+            }
+        }
+    }
 
     fun addDigit(digit: Char) {
         val s = _state.value
         if (s.isProcessing) return
-        if (bufferLength >= PinConfig.LENGTH) return
+        if (bufferLength >= PinConfig.PIN_LENGTH) return
 
         activeBuffer()[bufferLength++] = digit
         _state.update { it.copy(enteredLength = bufferLength, errorMessage = null) }
 
-        if (bufferLength == PinConfig.LENGTH) {
+        if (bufferLength == PinConfig.PIN_LENGTH) {
             advance()
         }
     }
@@ -68,6 +91,47 @@ class ChangePinViewModel(
         if (s.isProcessing || bufferLength == 0) return
         activeBuffer()[--bufferLength] = '\u0000'
         _state.update { it.copy(enteredLength = bufferLength) }
+    }
+
+    fun onPasswordInput(text: String) {
+        val s = _state.value
+        if (s.isProcessing) return
+        val buffer = when (_state.value.stage) {
+            Stage.OldPin -> oldPasswordBuffer
+            Stage.NewPin -> newPasswordBuffer
+            Stage.ConfirmNewPin -> confirmPasswordBuffer
+        }
+        buffer.update(text)
+        _state.update { it.copy(errorMessage = null) }
+    }
+
+    fun submitPasswordStage() {
+        val s = _state.value
+        if (s.isProcessing) return
+        val buffer = when (_state.value.stage) {
+            Stage.OldPin -> oldPasswordBuffer
+            Stage.NewPin -> newPasswordBuffer
+            Stage.ConfirmNewPin -> confirmPasswordBuffer
+        }
+        val trimmed = buffer.trimmedCopy()
+        if (trimmed.isEmpty()) return
+
+        when (_state.value.stage) {
+            Stage.OldPin -> {
+                _state.update { it.copy(stage = Stage.NewPin, enteredLength = 0) }
+            }
+            Stage.NewPin -> {
+                if (currentMethod == SecurityMethod.PASSWORD) {
+                    val validation = CredentialValidator.validate(SecurityMethod.PASSWORD, trimmed)
+                    if (!validation.ok) {
+                        _state.update { it.copy(errorMessage = validation.error) }
+                        return
+                    }
+                }
+                _state.update { it.copy(stage = Stage.ConfirmNewPin, enteredLength = 0) }
+            }
+            Stage.ConfirmNewPin -> submitPassword()
+        }
     }
 
     private fun activeBuffer(): CharArray = when (_state.value.stage) {
@@ -112,8 +176,6 @@ class ChangePinViewModel(
         }
         confirm.wipe()
 
-        // NEW-14: changing to the same PIN would trigger a pointless full
-        // re-encryption of every stored mnemonic and the DEK envelope.
         if (old.contentEquals(fresh)) {
             old.wipe()
             fresh.wipe()
@@ -130,7 +192,7 @@ class ChangePinViewModel(
         _state.update { it.copy(isProcessing = true, enteredLength = 0) }
         viewModelScope.launch {
             try {
-                when (val result = changePinUseCase(old, fresh)) {
+                when (val result = changePinUseCase(old, fresh, currentMethod)) {
                     ChangePinResult.Success -> _events.emit(Event.NavigateBack)
                     ChangePinResult.WrongOldPin -> resetAfterFailure(
                         "Current PIN is incorrect"
@@ -151,7 +213,67 @@ class ChangePinViewModel(
         }
     }
 
-    /** Returns the UI to the start of the flow after a failed PIN change. */
+    private fun submitPassword() {
+        val old = oldPasswordBuffer.toCharArray()
+        val fresh = newPasswordBuffer.toCharArray()
+        val confirm = confirmPasswordBuffer.toCharArray()
+        confirmPasswordBuffer.wipe()
+        newPasswordBuffer.wipe()
+        oldPasswordBuffer.wipe()
+
+        if (!fresh.contentEquals(confirm)) {
+            old.wipe()
+            fresh.wipe()
+            confirm.wipe()
+            _state.update {
+                it.copy(
+                    stage = Stage.NewPin,
+                    enteredLength = 0,
+                    errorMessage = "New passwords do not match. Try again."
+                )
+            }
+            return
+        }
+        confirm.wipe()
+
+        if (old.contentEquals(fresh)) {
+            old.wipe()
+            fresh.wipe()
+            _state.update {
+                it.copy(
+                    stage = Stage.NewPin,
+                    enteredLength = 0,
+                    errorMessage = "New password must be different from the current password"
+                )
+            }
+            return
+        }
+
+        _state.update { it.copy(isProcessing = true, enteredLength = 0) }
+        viewModelScope.launch {
+            try {
+                when (val result = changePinUseCase(old, fresh, currentMethod)) {
+                    ChangePinResult.Success -> _events.emit(Event.NavigateBack)
+                    ChangePinResult.WrongOldPin -> resetAfterFailure(
+                        "Current password is incorrect"
+                    )
+                    is ChangePinResult.Locked -> resetAfterFailure(
+                        "Too many attempts. Try again later."
+                    )
+                    is ChangePinResult.Failed -> resetAfterFailure(result.message)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                resetAfterFailure(e.message ?: "Failed to change password")
+            } finally {
+                old.wipe()
+                fresh.wipe()
+            }
+        }
+    }
+
+    /** Returns the UI to the start of the flow after a failed credential change. */
     private fun resetAfterFailure(message: String) {
         _state.update {
             it.copy(
@@ -167,6 +289,9 @@ class ChangePinViewModel(
         oldPinBuffer.wipe()
         newPinBuffer.wipe()
         confirmBuffer.wipe()
+        oldPasswordBuffer.wipe()
+        newPasswordBuffer.wipe()
+        confirmPasswordBuffer.wipe()
         bufferLength = 0
         super.onCleared()
     }

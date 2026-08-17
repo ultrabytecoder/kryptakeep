@@ -4,13 +4,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.domain.repository.PinState
+import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.domain.repository.VerifyResult
 import com.ultrabytecoder.kryptakeep.domain.usecase.CheckPinStatusUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.GetSecurityMethodUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetWalletsUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
 import com.ultrabytecoder.kryptakeep.providers.SyncMode
 import com.ultrabytecoder.kryptakeep.security.wipe
+import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -21,7 +24,8 @@ data class EnterPinState(
     val lockSecondsRemaining: Int = 0,
     val lockedUntil: Long = 0L,
     val isProcessing: Boolean = false,
-    val shakeTriggerId: Int = 0
+    val shakeTriggerId: Int = 0,
+    val securityMethod: SecurityMethod? = null
 )
 
 sealed class EnterPinEvent {
@@ -31,21 +35,23 @@ sealed class EnterPinEvent {
 }
 
 /**
- * The entered PIN is accumulated in a wipe-able [CharArray] buffer instead of
+ * The entered credential is accumulated in a wipe-able buffer instead of
  * immutable Strings, so intermediate values never linger on the heap.
  */
 class EnterPinViewModel(
     private val verifyPinUseCase: VerifyPinUseCase,
     private val getWalletsUseCase: GetWalletsUseCase,
     private val syncUseCase: SyncUseCase,
-    checkPinStatus: CheckPinStatusUseCase
+    checkPinStatus: CheckPinStatusUseCase,
+    getSecurityMethod: GetSecurityMethodUseCase
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(EnterPinState())
     val state: StateFlow<EnterPinState> = _state.asStateFlow()
 
-    private val buffer = CharArray(PinConfig.LENGTH)
+    private val buffer = CharArray(PinConfig.PIN_LENGTH)
     private var bufferLength = 0
+    private val passwordBuffer = SecureTextFieldState()
 
     private val _events = MutableSharedFlow<EnterPinEvent>(
         replay = 0,
@@ -55,7 +61,12 @@ class EnterPinViewModel(
     val events: Flow<EnterPinEvent> = _events
 
     init {
-        // Observe repository pin state changes — recompute lock from lockedUntil each time
+        viewModelScope.launch {
+            getSecurityMethod().collect { method ->
+                _state.update { it.copy(securityMethod = method) }
+            }
+        }
+
         viewModelScope.launch {
             checkPinStatus().collect { pinState ->
                 when (pinState) {
@@ -90,7 +101,6 @@ class EnterPinViewModel(
             }
         }
 
-        // Tick lock countdown every second — only while locked
         viewModelScope.launch {
             while (true) {
                 kotlinx.coroutines.delay(1000)
@@ -125,12 +135,12 @@ class EnterPinViewModel(
         val s = _state.value
         if (s.isLocked) return
         if (s.isProcessing) return
-        if (bufferLength >= PinConfig.LENGTH) return
+        if (bufferLength >= PinConfig.PIN_LENGTH) return
 
         buffer[bufferLength++] = digit
         _state.update { it.copy(enteredPinLength = bufferLength, errorMessage = null) }
 
-        if (bufferLength == PinConfig.LENGTH) {
+        if (bufferLength == PinConfig.PIN_LENGTH) {
             verifyPin()
         }
     }
@@ -139,6 +149,74 @@ class EnterPinViewModel(
         if (bufferLength == 0) return
         buffer[--bufferLength] = '\u0000'
         _state.update { it.copy(enteredPinLength = bufferLength) }
+    }
+
+    fun onPasswordInput(text: String) {
+        val s = _state.value
+        if (s.isLocked) return
+        if (s.isProcessing) return
+        passwordBuffer.update(text)
+        _state.update { it.copy(errorMessage = null) }
+    }
+
+    fun submitPassword() {
+        val s = _state.value
+        if (s.isLocked) return
+        if (s.isProcessing) return
+        val password = passwordBuffer.trimmedCopy()
+        if (password.isEmpty()) return
+        passwordBuffer.update("")
+        _state.update { it.copy(isProcessing = true, enteredPinLength = 0) }
+        viewModelScope.launch {
+            try {
+                when (val result = verifyPinUseCase(password)) {
+                    is VerifyResult.Success -> {
+                        _state.update { it.copy(isProcessing = false) }
+                        navigateAfterUnlock()
+                    }
+                    is VerifyResult.WrongPin -> {
+                        _state.update {
+                            it.copy(
+                                isProcessing = false,
+                                enteredPinLength = 0,
+                                shakeTriggerId = it.shakeTriggerId + 1,
+                                errorMessage = "Incorrect password (${result.remainingAttempts} remaining)"
+                            )
+                        }
+                    }
+                    is VerifyResult.Locked -> {
+                        val remaining = ((result.lockedUntil - kotlin.time.Clock.System.now().toEpochMilliseconds()) / 1000)
+                            .coerceAtLeast(0).toInt()
+                        _state.update {
+                            it.copy(
+                                isProcessing = false,
+                                enteredPinLength = 0,
+                                isLocked = true,
+                                lockedUntil = result.lockedUntil,
+                                lockSecondsRemaining = remaining,
+                                errorMessage = null
+                            )
+                        }
+                    }
+                    is VerifyResult.Corrupted -> {
+                        _state.update { it.copy(isProcessing = false) }
+                        _events.tryEmit(EnterPinEvent.NavigateToRecovery)
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(
+                        isProcessing = false,
+                        enteredPinLength = 0,
+                        errorMessage = e.message ?: "Verification failed"
+                    )
+                }
+            } finally {
+                password.wipe()
+            }
+        }
     }
 
     private fun verifyPin() {
@@ -200,6 +278,7 @@ class EnterPinViewModel(
 
     override fun onCleared() {
         buffer.wipe()
+        passwordBuffer.wipe()
         bufferLength = 0
         super.onCleared()
     }

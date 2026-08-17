@@ -45,7 +45,13 @@ sealed interface Screen {
     data object ManageWallets : Screen
 
     @Serializable
+    data object ChooseSecurityMethod : Screen
+
+    @Serializable
     data object SetupPin : Screen
+
+    @Serializable
+    data object SetupPassword : Screen
 
     @Serializable
     data object EnterPin : Screen

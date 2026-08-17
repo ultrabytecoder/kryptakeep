@@ -4,7 +4,9 @@ import com.ultrabytecoder.kryptakeep.domain.repository.ChangePinResult
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.domain.repository.PinRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.PinState
+import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.domain.repository.VerifyResult
+import com.ultrabytecoder.kryptakeep.domain.usecase.CredentialValidator
 import com.ultrabytecoder.kryptakeep.security.AesGcmAuthenticationException
 import com.ultrabytecoder.kryptakeep.security.HardwareKeyInvalidatedException
 import com.ultrabytecoder.kryptakeep.security.HardwareKeyStore
@@ -67,8 +69,10 @@ class PinRepositoryImpl(
     private val initScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     private val _pinStateFlow = MutableStateFlow<PinState>(PinState.Loading)
+    private val _securityMethodFlow = MutableStateFlow<SecurityMethod?>(null)
 
     override val pinStateFlow: StateFlow<PinState> = _pinStateFlow.asStateFlow()
+    override val securityMethodFlow: StateFlow<SecurityMethod?> = _securityMethodFlow.asStateFlow()
 
     init {
         initScope.launch {
@@ -79,6 +83,15 @@ class PinRepositoryImpl(
     private suspend fun loadState() {
         withContext(Dispatchers.Default) {
             mutex.withLock {
+                val storedMethod = settingsStorage.getString(SettingsKeys.SECURITY_METHOD)
+                if (storedMethod != null) {
+                    _securityMethodFlow.value = try {
+                        SecurityMethod.valueOf(storedMethod)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+
                 val stored = settingsStorage.getString(PIN_DATA_KEY)
                 if (stored == null) {
                     _pinStateFlow.value = PinState.NotSetup
@@ -88,7 +101,6 @@ class PinRepositoryImpl(
                 try {
                     val data = loadData(stored)
                     if (isLegacyStored(stored)) {
-                        // Migrate plaintext legacy lockout data to hardware-encrypted.
                         saveData(data)
                     }
                     val keyMaterialOk = keyManager.hasPinKeyMaterial()
@@ -110,13 +122,13 @@ class PinRepositoryImpl(
         }
     }
 
-    override suspend fun setupPin(pin: CharArray) = withContext(Dispatchers.Default) {
-        require(pin.size == PinConfig.LENGTH && pin.all { it.isDigit() }) {
-            "PIN must be ${PinConfig.LENGTH} digits"
+    override suspend fun setupPin(pin: CharArray, method: SecurityMethod) = withContext(Dispatchers.Default) {
+        require(CredentialValidator.validate(method, pin).ok) {
+            "Invalid credential"
         }
 
         mutex.withLock {
-            // The PIN is set up first (startup wizard), so no raw DEK exists yet —
+            // The credential is set up first (startup wizard), so no raw DEK exists yet —
             // always generate a fresh one and open the (empty) database with it.
             // Recreating the DB is safe here: there is no wallet data at stake
             // (this is the fresh-setup / recovery path, see SessionManager.unlockRecreating).
@@ -148,6 +160,8 @@ class PinRepositoryImpl(
             }
             // Success: sessionManager owns `dek`.
 
+            settingsStorage.putString(SettingsKeys.SECURITY_METHOD, method.name)
+            _securityMethodFlow.value = method
             saveData(PinSecureData())
             _pinStateFlow.value = PinState.Setup(
                 failedAttempts = 0,
@@ -228,18 +242,21 @@ class PinRepositoryImpl(
         }
     }
 
-    override suspend fun changePin(oldPin: CharArray, newPin: CharArray): ChangePinResult =
+    override suspend fun changePin(oldPin: CharArray, newPin: CharArray, newMethod: SecurityMethod): ChangePinResult =
         withContext(Dispatchers.Default) {
+            require(CredentialValidator.validate(newMethod, newPin).ok) {
+                "Invalid new credential"
+            }
             mutex.withLock {
                 // 1. Lockout gate shared with verifyPin (NEW-2): a locked-out user
-                //    cannot brute-force the old PIN through the change-PIN screen.
+                //    cannot brute-force the old credential through the change screen.
                 val result: ChangePinResult = when (val gate = loadLockoutGate()) {
                     is LockoutGate.Corrupted ->
                         ChangePinResult.Failed("PIN data is corrupted. Recovery required.")
                     is LockoutGate.Locked ->
                         ChangePinResult.Locked(gate.lockedUntil)
                     is LockoutGate.Open -> {
-                        // 2. Verify the old PIN (GCM-authenticated DEK unwrap, no stored
+                        // 2. Verify the old credential (GCM-authenticated DEK unwrap, no stored
                         //    verifier). The unwrapped DEK is kept for step 3 — a single
                         //    PBKDF2 derivation for the whole change (NEW-12).
                         var oldDek: ByteArray? = null
@@ -250,7 +267,7 @@ class PinRepositoryImpl(
                         }
 
                         if (oldDek == null) {
-                            // Wrong old PIN — count the attempt through the shared
+                            // Wrong old credential — count the attempt through the shared
                             // lockout logic (escalating lockout, NEW-2).
                             return@withLock when (val r = recordWrongPin(gate.data, gate.now, gate.nowMono)) {
                                 is VerifyResult.Locked -> ChangePinResult.Locked(r.lockedUntil)
@@ -258,7 +275,7 @@ class PinRepositoryImpl(
                             }
                         }
 
-                        // 3. Switch the DEK envelope to the new PIN — the mnemonic is stored
+                        // 3. Switch the DEK envelope to the new credential — the mnemonic is stored
                         //    plaintext in the SQLCipher database and needs no re-keying
                         //    (the new DEK encrypts it as soon as the DB is rewritten).
                         //    Any exception (hardware key failure) is treated as a wrap
@@ -274,9 +291,9 @@ class PinRepositoryImpl(
                             oldDek.wipe()
                         }
                         if (!rewrapped) {
-                            ChangePinResult.Failed("Failed to update PIN key material")
+                            ChangePinResult.Failed("Failed to update credential key material")
                         } else {
-                            // 4. Success — the old PIN verified, so clear the attempt counters.
+                            // 4. Success — the old credential verified, so clear the attempt counters.
                             val resetData = gate.data.copy(
                                 failedAttempts = 0,
                                 lockedUntil = 0L,
@@ -284,6 +301,8 @@ class PinRepositoryImpl(
                                 monotonicLockedAt = 0L,
                                 monotonicLockedUntil = 0L
                             )
+                            settingsStorage.putString(SettingsKeys.SECURITY_METHOD, newMethod.name)
+                            _securityMethodFlow.value = newMethod
                             saveData(resetData)
                             _pinStateFlow.value = PinState.Setup(
                                 failedAttempts = 0,

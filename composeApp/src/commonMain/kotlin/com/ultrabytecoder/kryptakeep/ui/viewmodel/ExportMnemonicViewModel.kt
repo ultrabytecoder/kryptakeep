@@ -4,12 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.domain.repository.PinState
+import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.domain.repository.VerifyResult
 import com.ultrabytecoder.kryptakeep.domain.usecase.CheckPinStatusUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetMnemonicUseCase
+import com.ultrabytecoder.kryptakeep.domain.usecase.GetSecurityMethodUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
 import com.ultrabytecoder.kryptakeep.security.SessionLockNotifier
 import com.ultrabytecoder.kryptakeep.security.wipe
+import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,7 +24,8 @@ class ExportMnemonicViewModel(
     private val walletId: Long,
     private val getMnemonic: GetMnemonicUseCase,
     private val verifyPinUseCase: VerifyPinUseCase,
-    checkPinStatus: CheckPinStatusUseCase
+    checkPinStatus: CheckPinStatusUseCase,
+    getSecurityMethod: GetSecurityMethodUseCase
 ) : ViewModel() {
 
     sealed interface State {
@@ -32,7 +36,8 @@ class ExportMnemonicViewModel(
             val lockSecondsRemaining: Int = 0,
             val lockedUntil: Long = 0L,
             val isProcessing: Boolean = false,
-            val shakeTriggerId: Int = 0
+            val shakeTriggerId: Int = 0,
+            val securityMethod: SecurityMethod? = null
         ) : State
 
         data object Loading : State
@@ -45,10 +50,17 @@ class ExportMnemonicViewModel(
     val state: StateFlow<State> = _state.asStateFlow()
 
     // Auth PIN buffer (wipe-able, never an immutable String).
-    private val buffer = CharArray(PinConfig.LENGTH)
+    private val buffer = CharArray(PinConfig.PIN_LENGTH)
     private var bufferLength = 0
+    private val passwordBuffer = SecureTextFieldState()
 
     init {
+        viewModelScope.launch {
+            getSecurityMethod().collect { method ->
+                updateAuth { it.copy(securityMethod = method) }
+            }
+        }
+
         viewModelScope.launch {
             checkPinStatus().collect { pinState ->
                 when (pinState) {
@@ -114,12 +126,12 @@ class ExportMnemonicViewModel(
     fun addDigit(digit: Char) {
         val s = _state.value as? State.AuthRequired ?: return
         if (s.isLocked || s.isProcessing) return
-        if (bufferLength >= PinConfig.LENGTH) return
+        if (bufferLength >= PinConfig.PIN_LENGTH) return
 
         buffer[bufferLength++] = digit
         updateAuth { it.copy(enteredPinLength = bufferLength, errorMessage = null) }
 
-        if (bufferLength == PinConfig.LENGTH) {
+        if (bufferLength == PinConfig.PIN_LENGTH) {
             verifyPin()
         }
     }
@@ -128,6 +140,65 @@ class ExportMnemonicViewModel(
         if (bufferLength == 0) return
         buffer[--bufferLength] = '\u0000'
         updateAuth { it.copy(enteredPinLength = bufferLength) }
+    }
+
+    fun onPasswordInput(text: String) {
+        val s = _state.value as? State.AuthRequired ?: return
+        if (s.isLocked || s.isProcessing) return
+        passwordBuffer.update(text)
+        updateAuth { it.copy(errorMessage = null) }
+    }
+
+    fun submitPassword() {
+        val s = _state.value as? State.AuthRequired ?: return
+        if (s.isLocked || s.isProcessing) return
+        val password = passwordBuffer.trimmedCopy()
+        if (password.isEmpty()) return
+        passwordBuffer.update("")
+        updateAuth { it.copy(isProcessing = true, enteredPinLength = 0) }
+        viewModelScope.launch {
+            try {
+                when (val result = verifyPinUseCase(password)) {
+                    is VerifyResult.Success -> loadMnemonic()
+                    is VerifyResult.WrongPin -> updateAuth {
+                        it.copy(
+                            isProcessing = false,
+                            shakeTriggerId = it.shakeTriggerId + 1,
+                            errorMessage = "Incorrect password (${result.remainingAttempts} remaining)"
+                        )
+                    }
+                    is VerifyResult.Locked -> {
+                        val remaining = ((result.lockedUntil - kotlin.time.Clock.System.now().toEpochMilliseconds()) / 1000)
+                            .coerceAtLeast(0).toInt()
+                        updateAuth {
+                            it.copy(
+                                isProcessing = false,
+                                enteredPinLength = 0,
+                                isLocked = true,
+                                lockedUntil = result.lockedUntil,
+                                lockSecondsRemaining = remaining,
+                                errorMessage = null
+                            )
+                        }
+                    }
+                    is VerifyResult.Corrupted -> {
+                        _state.value = State.Error("PIN data is corrupted. Wallet recovery is required.")
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                updateAuth {
+                    it.copy(
+                        isProcessing = false,
+                        enteredPinLength = 0,
+                        errorMessage = e.message ?: "Verification failed"
+                    )
+                }
+            } finally {
+                password.wipe()
+            }
+        }
     }
 
     private fun verifyPin() {
@@ -213,6 +284,7 @@ class ExportMnemonicViewModel(
             current.mnemonic.wipe()
         }
         buffer.wipe()
+        passwordBuffer.wipe()
         bufferLength = 0
         _state.value = State.AuthRequired()
     }

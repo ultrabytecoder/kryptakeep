@@ -83,7 +83,7 @@ fun WelcomeScreen(
             }
 
             Button(
-                onClick = { navController.navigate(Screen.SetupPin) },
+                onClick = { navController.navigate(Screen.ChooseSecurityMethod) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)
