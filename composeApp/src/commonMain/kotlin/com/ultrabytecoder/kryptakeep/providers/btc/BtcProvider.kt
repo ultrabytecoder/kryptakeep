@@ -84,6 +84,15 @@ class BtcProvider(
         else -> 9L
     }
 
+    private fun chainPrefix(derivationIndex: Long, chain: Int): String =
+        "m/84'/${networkConfig.btcBip84CoinType}'/$derivationIndex'/$chain/"
+
+    private suspend fun minDbIndexForChain(accountId: String, chain: Int, derivationIndex: Long): Long =
+        utxoRepository.getUtxosByAccount(accountId)
+            .filter { it.derivationPath.startsWith(chainPrefix(derivationIndex, chain)) }
+            .mapNotNull { it.derivationPath.substringAfterLast('/').toLongOrNull() }
+            .minOrNull() ?: Long.MAX_VALUE
+
     private fun estimateVSize(numInputs: Int, numOutputs: Int): Long {
         var nonWitness = 0L
         nonWitness += 4 // version
@@ -159,11 +168,17 @@ class BtcProvider(
 
         val receiveStartIndex = when (syncMode) {
             SyncMode.FULL -> 0L
-            SyncMode.NORMAL -> params["current_receive_key_id"]?.jsonPrimitive?.long ?: 0L
+            SyncMode.NORMAL -> minOf(
+                params["current_receive_key_id"]?.jsonPrimitive?.long ?: 0L,
+                minDbIndexForChain(accountId, RECEIVE_CHAIN, derivationIndex)
+            )
         }
         val changeStartIndex = when (syncMode) {
             SyncMode.FULL -> 0L
-            SyncMode.NORMAL -> params["current_change_key_id"]?.jsonPrimitive?.long ?: 0L
+            SyncMode.NORMAL -> minOf(
+                params["current_change_key_id"]?.jsonPrimitive?.long ?: 0L,
+                minDbIndexForChain(accountId, CHANGE_CHAIN, derivationIndex)
+            )
         }
 
         val client = createClient()
@@ -379,6 +394,7 @@ class BtcProvider(
     ): Long? {
         val existingUtxos = utxoRepository.getUtxosByAccount(accountId)
         val existingTxids = existingUtxos.map { "${it.txid}:${it.vout}" }.toSet()
+        val seenOutpoints = mutableSetOf<String>()
 
         var consecutiveEmpty = 0
         var addressIndex = startIndex
@@ -397,6 +413,7 @@ class BtcProvider(
                 highestUsedIndex = addressIndex
                 for (utxo in utxos) {
                     val outpoint = "${utxo.txid}:${utxo.vout}"
+                    seenOutpoints.add(outpoint)
                     if (outpoint !in existingTxids) {
                         utxoRepository.insertUtxo(
                             UtxoInfo(
@@ -411,6 +428,15 @@ class BtcProvider(
                 }
             }
             addressIndex++
+        }
+        // Delete DB utxos on this chain that the API no longer reports as unspent (spent externally
+        // or by a send whose cleanup was interrupted)
+        val stale = existingUtxos.filter {
+            it.derivationPath.startsWith(chainPrefix(derivationIndex, chain)) &&
+            "${it.txid}:${it.vout}" !in seenOutpoints
+        }
+        for (utxo in stale) {
+            utxoRepository.deleteUtxo(utxo.id)
         }
         return highestUsedIndex
     }
