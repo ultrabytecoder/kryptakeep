@@ -240,6 +240,13 @@ compose.desktop {
             targetFormats(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Msi, TargetFormat.Dmg)
             packageName = "KryptaKeep"
             packageVersion = "1.0.0"
+            windows {
+                menuGroup = "KryptaKeep"
+                shortcut = true
+                dirChooser = true
+                perUserInstall = true
+                upgradeUuid = "7a5d1f8e-3b2c-4d6a-9e1f-0a2b3c4d5e6f"
+            }
         }
     }
 }

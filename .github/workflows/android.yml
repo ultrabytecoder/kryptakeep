@@ -43,8 +43,29 @@ jobs:
         path: composeApp/build/outputs/apk/productionMainnet/debug/*.apk
 
   desktop-build:
-
-    runs-on: ubuntu-latest
+    name: Desktop (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+            task: :composeApp:packageDeb :composeApp:packageRpm :composeApp:packageUberJarForCurrentOS
+            artifact-path: composeApp/build/compose/binaries/main/
+            install-deps: |
+              sudo apt-get update
+              sudo apt-get install -y fakeroot dpkg-dev rpm
+          - os: macos-latest
+            target: macos
+            task: :composeApp:packageDmg
+            artifact-path: composeApp/build/compose/binaries/main/dmg/
+            install-deps: ""
+          - os: windows-latest
+            target: windows
+            task: :composeApp:packageMsi
+            artifact-path: composeApp/build/compose/binaries/main/msi/
+            install-deps: ""
 
     steps:
     - uses: actions/checkout@v4
@@ -56,33 +77,19 @@ jobs:
         cache: gradle
 
     - name: Grant execute permission for gradlew
+      if: runner.os != 'Windows'
       run: chmod +x gradlew
 
     - name: Install packaging dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y fakeroot dpkg-dev rpm
+      if: matrix.install-deps != ''
+      run: ${{ matrix.install-deps }}
 
-    - name: Build Linux packages
-      run: ./gradlew :composeApp:packageDeb :composeApp:packageRpm
+    - name: Build desktop packages
+      run: ./gradlew ${{ matrix.task }}
 
-    - name: Build uber jar
-      run: ./gradlew :composeApp:packageUberJarForCurrentOS
-
-    - name: Upload DEB package
+    - name: Upload installers
       uses: actions/upload-artifact@v4
       with:
-        name: KryptaKeep-linux-deb
-        path: composeApp/build/compose/binaries/main/deb/*.deb
-
-    - name: Upload RPM package
-      uses: actions/upload-artifact@v4
-      with:
-        name: KryptaKeep-linux-rpm
-        path: composeApp/build/compose/binaries/main/rpm/*.rpm
-
-    - name: Upload uber jar
-      uses: actions/upload-artifact@v4
-      with:
-        name: KryptaKeep-linux-jar
-        path: composeApp/build/compose/jars/*.jar
+        name: KryptaKeep-${{ matrix.target }}
+        path: ${{ matrix.artifact-path }}
+        if-no-files-found: error
