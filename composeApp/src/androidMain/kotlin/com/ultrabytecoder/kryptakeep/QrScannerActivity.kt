@@ -82,14 +82,18 @@ class QrScannerActivity : ComponentActivity() {
     }
 
     private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) {
-                startCamera()
-            } else {
-                finish()
+        registerForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+            @ExperimentalCamera2Interop { granted ->
+                if (granted) {
+                    startCamera()
+                } else {
+                    finish()
+                }
             }
-        }
+        )
 
+    @ExperimentalCamera2Interop
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -106,7 +110,7 @@ class QrScannerActivity : ComponentActivity() {
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black),
-                onPreviewReady = { view ->
+                onPreviewReady = @ExperimentalCamera2Interop { view ->
                     previewView = view
                     cameraProvider?.let { bindPreview(it) }
                 }
@@ -120,6 +124,7 @@ class QrScannerActivity : ComponentActivity() {
         }
     }
 
+    @ExperimentalCamera2Interop
     private fun startCamera() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
