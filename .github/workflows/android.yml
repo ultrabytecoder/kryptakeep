@@ -41,3 +41,48 @@ jobs:
       with:
         name: app-productionMainnet-debug
         path: composeApp/build/outputs/apk/productionMainnet/debug/*.apk
+
+  desktop-build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    - name: Install packaging dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y fakeroot dpkg-dev rpm
+
+    - name: Build Linux packages
+      run: ./gradlew :composeApp:packageDeb :composeApp:packageRpm
+
+    - name: Build uber jar
+      run: ./gradlew :composeApp:packageUberJarForCurrentOS
+
+    - name: Upload DEB package
+      uses: actions/upload-artifact@v4
+      with:
+        name: KryptaKeep-linux-deb
+        path: composeApp/build/compose/binaries/main/deb/*.deb
+
+    - name: Upload RPM package
+      uses: actions/upload-artifact@v4
+      with:
+        name: KryptaKeep-linux-rpm
+        path: composeApp/build/compose/binaries/main/rpm/*.rpm
+
+    - name: Upload uber jar
+      uses: actions/upload-artifact@v4
+      with:
+        name: KryptaKeep-linux-jar
+        path: composeApp/build/compose/jars/*.jar
