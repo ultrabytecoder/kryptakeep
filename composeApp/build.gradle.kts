@@ -24,6 +24,13 @@ kotlin {
         }
     }
 
+    jvm("desktop") {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+            freeCompilerArgs.add("-Xexpect-actual-classes")
+        }
+    }
+
     listOf(
         iosArm64(),
         iosSimulatorArm64()
@@ -40,6 +47,8 @@ kotlin {
     }
 
     sourceSets {
+        val currentOs = org.gradle.internal.os.OperatingSystem.current()
+
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
@@ -106,14 +115,35 @@ kotlin {
             implementation(libs.yet300.sqlcipher.driver)
             implementation(libs.ktor.client.darwin)
         }
+
+        val desktopJniTarget = when {
+            currentOs.isLinux -> "linux"
+            currentOs.isMacOsX -> "darwin"
+            currentOs.isWindows -> "mingw"
+            else -> error("Unsupported OS for desktop target")
+        }
+        val desktopMain by getting {
+            dependencies {
+                implementation(compose.desktop.currentOs)
+                implementation(libs.jna)
+                implementation(libs.kotlinx.coroutines.swing)
+                implementation(libs.ktor.client.okhttp)
+                implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-jvm-$desktopJniTarget:0.23.0")
+            }
+        }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.ktor.client.mock)
             implementation(libs.coroutines.test)
         }
+        val desktopTest by getting {
+            dependencies {
+                implementation(libs.kotlin.test)
+                implementation(libs.junit)
+            }
+        }
 
         androidUnitTest.dependencies {
-            val currentOs = org.gradle.internal.os.OperatingSystem.current()
             val target = when {
                 currentOs.isLinux -> "linux"
                 currentOs.isMacOsX -> "darwin"
@@ -200,5 +230,17 @@ sqldelight {
     // SQLCipher (yet300 driver) provides its own sqlite3_* symbols on Apple targets —
     // do not link the system SQLite or the encrypted binary would be mislinked.
     linkSqlite.set(false)
+}
+
+compose.desktop {
+    application {
+        mainClass = "com.ultrabytecoder.kryptakeep.MainKt"
+
+        nativeDistributions {
+            targetFormats(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Msi, TargetFormat.Dmg)
+            packageName = "KryptaKeep"
+            packageVersion = "1.0.0"
+        }
+    }
 }
 
