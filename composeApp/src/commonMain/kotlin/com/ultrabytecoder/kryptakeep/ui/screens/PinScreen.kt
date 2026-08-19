@@ -274,6 +274,7 @@ fun PinScreenEnter(
             }
 
             if (isPassword) {
+                Spacer(modifier = Modifier.height(24.dp))
                 if (state.isProcessing) {
                     Spacer(modifier = Modifier.height(16.dp))
                 } else {

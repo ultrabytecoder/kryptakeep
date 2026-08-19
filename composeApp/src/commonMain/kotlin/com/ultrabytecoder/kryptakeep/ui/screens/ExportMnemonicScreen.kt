@@ -212,6 +212,7 @@ fun ExportMnemonicScreen(
                         }
 
                         if (isPassword) {
+                            Spacer(modifier = Modifier.height(24.dp))
                             if (auth.isProcessing) {
                                 Spacer(modifier = Modifier.height(16.dp))
                             } else {
