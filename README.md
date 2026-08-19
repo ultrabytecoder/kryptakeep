@@ -57,6 +57,18 @@ Open `iosApp/` in Xcode and run from there.
 - `productionTestnet` — connects to testnet networks
 - `productionMainnet` — connects to mainnet networks
 
+## Supported Platforms
+
+| Platform | Minimum Version | Notes |
+|----------|-----------------|-------|
+| Android  | 7.0 (API 24)    | Targets API 36 |
+| iOS      | 18.2            | `arm64` (device) and `simulatorArm64` (Apple Silicon) |
+| Linux    | —               | Desktop, packaged as `.deb` and `.rpm` |
+| macOS    | —               | Desktop, packaged as `.dmg` |
+| Windows  | —               | Desktop, packaged as `.msi` |
+
+Desktop is built with Compose Desktop (JVM 17) and runs on all three OSes.
+
 ## Requirements
 
 - Android SDK 24+ (targets up to 36)

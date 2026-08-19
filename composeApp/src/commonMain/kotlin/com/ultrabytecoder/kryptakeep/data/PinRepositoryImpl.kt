@@ -151,7 +151,12 @@ class PinRepositoryImpl(
                 keyManager.deleteAll()
                 throw e
             } catch (e: Exception) {
-                false
+                // The database could not be opened even after recreation —
+                // surface the real cause (e.g. a missing/mislinked native
+                // SQLCipher library) instead of a generic message.
+                dek.wipe()
+                keyManager.deleteAll()
+                throw IllegalStateException("Failed to initialize secure storage: ${e.message}", e)
             }
             if (!opened) {
                 dek.wipe()
