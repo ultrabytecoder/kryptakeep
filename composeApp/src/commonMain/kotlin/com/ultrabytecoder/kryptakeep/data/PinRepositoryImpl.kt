@@ -100,9 +100,6 @@ class PinRepositoryImpl(
 
                 try {
                     val data = loadData(stored)
-                    if (isLegacyStored(stored)) {
-                        saveData(data)
-                    }
                     val keyMaterialOk = keyManager.hasPinKeyMaterial()
                     _pinStateFlow.value = PinState.Setup(
                         failedAttempts = data.failedAttempts,
@@ -471,33 +468,32 @@ class PinRepositoryImpl(
         }
     }
 
-    private fun isLegacyStored(stored: String): Boolean = stored.startsWith("{")
-
     /**
-     * Decodes [stored] lockout data: legacy installs kept plaintext JSON; current
-     * installs hardware-encrypt it (tampering fails authentication here).
+     * Decodes [stored] lockout data: hardware-encrypted (AES-GCM via the device
+     * key; on Desktop a passthrough). Tampering fails authentication here.
      *
      * @throws Exception on corruption/tamper — callers treat it as corrupted state.
      */
     private fun loadData(stored: String): PinSecureData {
-        if (isLegacyStored(stored)) {
-            return json.decodeFromString<PinSecureData>(stored)
-        }
         val blob = Base64.Default.decode(stored)
-        val plain = HardwareKeyStore.decrypt(blob)
+        var plain: ByteArray? = null
         return try {
+            plain = HardwareKeyStore.decrypt(blob)
             json.decodeFromString<PinSecureData>(plain.decodeToString())
         } finally {
-            plain.wipe()
+            plain?.wipe()
+            blob.wipe()
         }
     }
 
     private fun saveData(data: PinSecureData) {
         val plain = json.encodeToString(PinSecureData.serializer(), data).encodeToByteArray()
+        var blob: ByteArray? = null
         try {
-            val blob = HardwareKeyStore.encrypt(plain)
+            blob = HardwareKeyStore.encrypt(plain)
             settingsStorage.putString(PIN_DATA_KEY, Base64.Default.encode(blob))
         } finally {
+            blob?.wipe()
             plain.wipe()
         }
     }

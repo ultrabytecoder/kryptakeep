@@ -13,6 +13,10 @@ class HardwareKeyInvalidatedException(message: String) : Exception(message)
  * - Android: Android Keystore AES-256-GCM key (`setUserAuthenticationRequired(false)`),
  *   backed by TEE/StrongBox where the SoC provides it.
  * - iOS: Secure Enclave ECC P-256 key (`kSecAttrTokenIDSecureEnclave`), ECIES-AES-GCM.
+ * - Desktop: Passthrough implementation (returns a copy of the input). Desktop
+ *   platforms lack a universal OS-backed keystore, so security relies entirely
+ *   on the high-entropy password enforced by PinConfig; the salt is stored
+ *   in plaintext and is not bound to the device.
  *
  * Purpose: bind the key hierarchy to the device. The PIN salt is encrypted here, so
  * deriving the KEK requires the hardware key — an attacker who extracts the app data

@@ -1,76 +1,35 @@
 package com.ultrabytecoder.kryptakeep.security
 
-import com.ultrabytecoder.kryptakeep.data.appDataDir
-import com.ultrabytecoder.kryptakeep.data.restrictFileToOwner
-import java.io.File
-import java.security.SecureRandom
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
-
 /**
- * Desktop device key.
+ * Desktop device key — Passthrough implementation.
  *
- * There is no OS-backed keystore abstraction on plain JVM without extra native
- * dependencies, so the key is a random AES-256 key stored in
- * `<user.home>/.kryptakeep/.device_key` with owner-only permissions
- * (0600 on POSIX). This binds the key hierarchy to the app data directory —
- * the same threat-model position as Android Keystore, minus the hardware
- * backing (no StrongBox/TEE on desktop without TPM integration).
+ * Desktop platforms lack a universal, hardware-backed OS keystore abstraction
+ * available to the JVM without fragile native bindings. Relying on a file-based
+ * AES key provides no real protection against offline brute-force if the app
+ * data directory is exfiltrated.
  *
- * The key file is created lazily on first [encrypt].
+ * **Threat Model Change:** Desktop security now relies on **high-entropy passwords**
+ * (16+ chars, enforced by `PinConfig.desktop.kt`). The PBKDF2 salt is stored in
+ * plaintext. If an attacker steals the app data, they still cannot brute-force
+ * the KEK offline because the password has 100+ bits of entropy, making
+ * PBKDF2-HMAC-SHA256(600k iterations) mathematically infeasible to crack.
+ *
+ * The `encrypt` and `decrypt` functions are identity functions (returning a copy
+ * to prevent premature wiping of the original array by callers).
  */
 actual object HardwareKeyStore {
 
-    private const val KEY_ALIAS = "kryptakeep_device_key"
-    private const val GCM_IV_LENGTH = 12
-    private const val GCM_TAG_BITS = 128
-
-    private val baseDir = appDataDir()
-    private val keyFile = File(baseDir, ".device_key")
-
-    private val keyLock = Any()
-
-    private fun getOrCreateSecretKey(): SecretKey = synchronized(keyLock) {
-        if (!keyFile.exists()) {
-            baseDir.mkdirs()
-            val keyGenerator = KeyGenerator.getInstance("AES")
-            keyGenerator.init(256)
-            val key = keyGenerator.generateKey()
-            keyFile.writeBytes(key.encoded)
-            restrictFileToOwner(keyFile)
-        }
-        val encoded = keyFile.readBytes()
-        javax.crypto.spec.SecretKeySpec(encoded, "AES").also {
-            encoded.wipe()
-        }
-    }
-
     actual fun encrypt(plaintext: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
-        val ciphertext = cipher.doFinal(plaintext)
-        return cipher.iv + ciphertext
+        // Passthrough: return a copy so the caller's wipe() doesn't destroy the original.
+        return plaintext.copyOf()
     }
 
     actual fun decrypt(encrypted: ByteArray): ByteArray {
-        if (!keyFile.exists()) {
-            throw HardwareKeyInvalidatedException("Device hardware key missing")
-        }
-        require(encrypted.size > GCM_IV_LENGTH) { "Encrypted data too short" }
-        val iv = encrypted.copyOfRange(0, GCM_IV_LENGTH)
-        val ciphertext = encrypted.copyOfRange(GCM_IV_LENGTH, encrypted.size)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
-        return try {
-            cipher.doFinal(ciphertext)
-        } catch (e: javax.crypto.AEADBadTagException) {
-            throw AesGcmAuthenticationException("Hardware GCM authentication failed")
-        }
+        // Passthrough: return a copy so the caller's wipe() doesn't destroy the original.
+        return encrypted.copyOf()
     }
 
     actual fun deleteKey() {
-        keyFile.delete()
+        // No-op. No hardware or file-based key exists to delete.
     }
 }

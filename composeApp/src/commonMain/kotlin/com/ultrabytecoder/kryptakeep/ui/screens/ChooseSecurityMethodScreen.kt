@@ -35,6 +35,7 @@ import compose.icons.feathericons.Key
 import compose.icons.feathericons.Lock
 import com.ultrabytecoder.kryptakeep.navigation.Screen
 import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
+import com.ultrabytecoder.kryptakeep.domain.repository.supportedSecurityMethods
 import com.ultrabytecoder.kryptakeep.domain.usecase.SetSecurityMethodUseCase
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,6 +72,9 @@ fun ChooseSecurityMethodScreen(
             )
             Spacer(modifier = Modifier.height(32.dp))
 
+            val methods = supportedSecurityMethods
+
+            if (methods.contains(SecurityMethod.PIN)) {
             Card(
                 onClick = {
                     setSecurityMethod(SecurityMethod.PIN)
@@ -113,8 +117,13 @@ fun ChooseSecurityMethodScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            }
 
+            if (methods.contains(SecurityMethod.PIN)) {
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            if (methods.contains(SecurityMethod.PASSWORD)) {
             Card(
                 onClick = {
                     setSecurityMethod(SecurityMethod.PASSWORD)
@@ -155,6 +164,7 @@ fun ChooseSecurityMethodScreen(
                         )
                     }
                 }
+            }
             }
         }
     }
