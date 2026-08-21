@@ -2,8 +2,11 @@ package com.ultrabytecoder.kryptakeep.ui.screens
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -73,52 +76,114 @@ fun PinScreenSetup(
                 .padding(paddingValues)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = if (state.isChoosingLength) Arrangement.Center else Arrangement.SpaceBetween
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    if (state.isConfirming) "Confirm your PIN" else "Create a PIN",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    if (state.isConfirming) "Re-enter the same PIN" else "Enter a ${PinConfig.PIN_LENGTH}-digit PIN",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(32.dp))
-
-                PinDotsInline(
-                    enteredLength = state.enteredPinLength,
-                    pinLength = PinConfig.PIN_LENGTH
-                )
-
-if (state.isProcessing) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp
-                    )
-                } else if (state.errorMessage != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                if (state.isChoosingLength) {
                     Text(
-                        state.errorMessage!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
+                        "Choose PIN length",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Medium
                     )
+                    Text(
+                        "Select how many digits your PIN will have",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(32.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        PinConfig.PIN_LENGTH_OPTIONS.forEach { length ->
+                            PinLengthOption(
+                                length = length,
+                                onClick = { viewModel.selectPinLength(length) }
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        if (state.isConfirming) "Confirm your PIN" else "Create a PIN",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        if (state.isConfirming) "Re-enter the same PIN" else "Enter a ${state.pinLength}-digit PIN",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(32.dp))
+
+                    PinDotsInline(
+                        enteredLength = state.enteredPinLength,
+                        pinLength = state.pinLength
+                    )
+
+                    if (state.isProcessing) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else if (state.errorMessage != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            state.errorMessage!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             }
 
-            Numpad(
-                onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
-                onDeleteClick = { viewModel.removeDigit() },
-                isLocked = state.isLocked || state.isProcessing
-            )
+            if (!state.isChoosingLength) {
+                Numpad(
+                    onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
+                    onDeleteClick = { viewModel.removeDigit() },
+                    isLocked = state.isLocked || state.isProcessing
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun PinLengthOption(
+    length: Int,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(140.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                shape = RoundedCornerShape(20.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            "$length",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "digits",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -245,7 +310,7 @@ fun PinScreenEnter(
                 } else {
                     PinDotsInline(
                         enteredLength = state.enteredPinLength,
-                        pinLength = PinConfig.PIN_LENGTH,
+                        pinLength = state.pinLength,
                         modifier = Modifier.offset { IntOffset(shakeOffset.toInt(), 0) }
                     )
                 }

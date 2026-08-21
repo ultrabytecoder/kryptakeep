@@ -56,7 +56,6 @@ import compose.icons.feathericons.Check
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
-import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.platform.preventScreenshots
 import com.ultrabytecoder.kryptakeep.security.wipe
@@ -183,7 +182,7 @@ fun ExportMnemonicScreen(
                             } else {
                                 PinDotsInline(
                                     enteredLength = auth.enteredPinLength,
-                                    pinLength = PinConfig.PIN_LENGTH,
+                                    pinLength = auth.pinLength,
                                     modifier = Modifier.offset { IntOffset(shakeOffset.toInt(), 0) }
                                 )
                             }

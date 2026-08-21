@@ -2,6 +2,8 @@ package com.ultrabytecoder.kryptakeep.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ultrabytecoder.kryptakeep.data.SettingsKeys
+import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.domain.repository.PinState
 import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
@@ -19,6 +21,7 @@ import kotlinx.coroutines.launch
 
 data class EnterPinState(
     val enteredPinLength: Int = 0,
+    val pinLength: Int = PinConfig.PIN_LENGTH,
     val errorMessage: String? = null,
     val isLocked: Boolean = false,
     val lockSecondsRemaining: Int = 0,
@@ -43,13 +46,21 @@ class EnterPinViewModel(
     private val getWalletsUseCase: GetWalletsUseCase,
     private val syncUseCase: SyncUseCase,
     checkPinStatus: CheckPinStatusUseCase,
-    getSecurityMethod: GetSecurityMethodUseCase
+    getSecurityMethod: GetSecurityMethodUseCase,
+    settingsStorage: SettingsStorage
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(EnterPinState())
+    private val _state = MutableStateFlow(
+        EnterPinState(
+            pinLength = settingsStorage.getString(SettingsKeys.PIN_LENGTH)
+                ?.toIntOrNull()
+                ?.takeIf { it in PinConfig.PIN_LENGTH_OPTIONS }
+                ?: PinConfig.PIN_LENGTH
+        )
+    )
     val state: StateFlow<EnterPinState> = _state.asStateFlow()
 
-    private val buffer = CharArray(PinConfig.PIN_LENGTH)
+    private val buffer = CharArray(_state.value.pinLength)
     private var bufferLength = 0
     private val passwordBuffer = SecureTextFieldState()
 
@@ -135,12 +146,12 @@ class EnterPinViewModel(
         val s = _state.value
         if (s.isLocked) return
         if (s.isProcessing) return
-        if (bufferLength >= PinConfig.PIN_LENGTH) return
+        if (bufferLength >= s.pinLength) return
 
         buffer[bufferLength++] = digit
         _state.update { it.copy(enteredPinLength = bufferLength, errorMessage = null) }
 
-        if (bufferLength == PinConfig.PIN_LENGTH) {
+        if (bufferLength == s.pinLength) {
             verifyPin()
         }
     }

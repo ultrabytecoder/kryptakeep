@@ -20,4 +20,5 @@ object CustomNodeKeys {
 object SettingsKeys {
     const val FIAT_CURRENCY = "fiat_currency"
     const val SECURITY_METHOD = "security_method"
+    const val PIN_LENGTH = "pin_length"
 }

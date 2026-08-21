@@ -2,6 +2,8 @@ package com.ultrabytecoder.kryptakeep.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ultrabytecoder.kryptakeep.data.SettingsKeys
+import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.domain.repository.ChangePinResult
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
@@ -22,7 +24,8 @@ import kotlinx.coroutines.launch
 
 class ChangePinViewModel(
     private val changePinUseCase: ChangePinUseCase,
-    getSecurityMethod: GetSecurityMethodUseCase
+    getSecurityMethod: GetSecurityMethodUseCase,
+    settingsStorage: SettingsStorage
 ) : ViewModel() {
 
     enum class Stage { OldPin, NewPin, ConfirmNewPin }
@@ -30,6 +33,7 @@ class ChangePinViewModel(
     data class UiState(
         val stage: Stage = Stage.OldPin,
         val enteredLength: Int = 0,
+        val pinLength: Int = PinConfig.PIN_LENGTH,
         val isProcessing: Boolean = false,
         val errorMessage: String? = null,
         val securityMethod: SecurityMethod? = null
@@ -39,7 +43,12 @@ class ChangePinViewModel(
         data object NavigateBack : Event()
     }
 
-    private val _state = MutableStateFlow(UiState())
+    private val pinLength = settingsStorage.getString(SettingsKeys.PIN_LENGTH)
+        ?.toIntOrNull()
+        ?.takeIf { it in PinConfig.PIN_LENGTH_OPTIONS }
+        ?: PinConfig.PIN_LENGTH
+
+    private val _state = MutableStateFlow(UiState(pinLength = pinLength))
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private val _events = MutableSharedFlow<Event>(
@@ -50,9 +59,9 @@ class ChangePinViewModel(
     val events: Flow<Event> = _events.asSharedFlow()
 
     // PIN buffers (wipe-able CharArray).
-    private val oldPinBuffer = CharArray(PinConfig.PIN_LENGTH)
-    private val newPinBuffer = CharArray(PinConfig.PIN_LENGTH)
-    private val confirmBuffer = CharArray(PinConfig.PIN_LENGTH)
+    private val oldPinBuffer = CharArray(pinLength)
+    private val newPinBuffer = CharArray(pinLength)
+    private val confirmBuffer = CharArray(pinLength)
     private var bufferLength = 0
 
     // Password buffers (wipe-able via SecureTextFieldState).
@@ -76,12 +85,12 @@ class ChangePinViewModel(
     fun addDigit(digit: Char) {
         val s = _state.value
         if (s.isProcessing) return
-        if (bufferLength >= PinConfig.PIN_LENGTH) return
+        if (bufferLength >= s.pinLength) return
 
         activeBuffer()[bufferLength++] = digit
         _state.update { it.copy(enteredLength = bufferLength, errorMessage = null) }
 
-        if (bufferLength == PinConfig.PIN_LENGTH) {
+        if (bufferLength == s.pinLength) {
             advance()
         }
     }

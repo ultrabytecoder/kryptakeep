@@ -166,6 +166,9 @@ class PinRepositoryImpl(
             // Success: sessionManager owns `dek`.
 
             settingsStorage.putString(SettingsKeys.SECURITY_METHOD, method.name)
+            if (method == SecurityMethod.PIN) {
+                settingsStorage.putString(SettingsKeys.PIN_LENGTH, pin.size.toString())
+            }
             _securityMethodFlow.value = method
             saveData(PinSecureData())
             _pinStateFlow.value = PinState.Setup(

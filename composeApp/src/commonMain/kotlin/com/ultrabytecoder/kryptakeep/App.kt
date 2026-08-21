@@ -252,9 +252,10 @@ fun App() {
                 val verifyPin: VerifyPinUseCase = koinInject()
                 val checkPinStatus: CheckPinStatusUseCase = koinInject()
                 val getSecurityMethod: GetSecurityMethodUseCase = koinInject()
+                val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
                 val viewModel = remember(route.walletId) {
                     ExportMnemonicViewModel(
-                        route.walletId, getMnemonic, verifyPin, checkPinStatus, getSecurityMethod
+                        route.walletId, getMnemonic, verifyPin, checkPinStatus, getSecurityMethod, settingsStorage
                     )
                 }
                 ExportMnemonicScreen(navController, viewModel)
@@ -270,7 +271,8 @@ fun App() {
             }
             composable<Screen.SetupPin> {
                 val setupPin: SetupPinUseCase = koinInject()
-                val viewModel = remember { SetupPinViewModel(setupPin) }
+                val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
+                val viewModel = remember { SetupPinViewModel(setupPin, settingsStorage) }
                 PinScreenSetup(navController, viewModel)
             }
             composable<Screen.SetupPassword> {
@@ -284,7 +286,8 @@ fun App() {
                 val syncUseCase: SyncUseCase = koinInject()
                 val checkPinStatus: CheckPinStatusUseCase = koinInject()
                 val getSecurityMethod: GetSecurityMethodUseCase = koinInject()
-                val viewModel = remember { EnterPinViewModel(verifyPin, getWallets, syncUseCase, checkPinStatus, getSecurityMethod) }
+                val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
+                val viewModel = remember { EnterPinViewModel(verifyPin, getWallets, syncUseCase, checkPinStatus, getSecurityMethod, settingsStorage) }
                 PinScreenEnter(navController, viewModel)
             }
             composable<Screen.Settings> {
@@ -297,7 +300,8 @@ fun App() {
             composable<Screen.ChangePin> {
                 val changePin: ChangePinUseCase = koinInject()
                 val getSecurityMethod: GetSecurityMethodUseCase = koinInject()
-                val viewModel = remember { ChangePinViewModel(changePin, getSecurityMethod) }
+                val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
+                val viewModel = remember { ChangePinViewModel(changePin, getSecurityMethod, settingsStorage) }
                 ChangePinScreen(navController, viewModel)
             }
             composable<Screen.CustomNodes> {

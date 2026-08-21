@@ -4,6 +4,7 @@ import kotlin.time.Duration.Companion.minutes
 
 actual object PinConfig {
     actual val PIN_LENGTH = 6
+    actual val PIN_LENGTH_OPTIONS = listOf(6, 8)
     actual val PASSWORD_MIN_LENGTH = 16 // High entropy required on Desktop
     actual val PASSWORD_MIN_CLASSES = 4 // Strict complexity required on Desktop
     actual val MAX_ATTEMPTS = 5

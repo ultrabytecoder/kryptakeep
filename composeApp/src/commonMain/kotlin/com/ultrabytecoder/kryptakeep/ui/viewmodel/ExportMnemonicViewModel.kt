@@ -2,6 +2,8 @@ package com.ultrabytecoder.kryptakeep.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ultrabytecoder.kryptakeep.data.SettingsKeys
+import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.domain.repository.PinState
 import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
@@ -25,12 +27,14 @@ class ExportMnemonicViewModel(
     private val getMnemonic: GetMnemonicUseCase,
     private val verifyPinUseCase: VerifyPinUseCase,
     checkPinStatus: CheckPinStatusUseCase,
-    getSecurityMethod: GetSecurityMethodUseCase
+    getSecurityMethod: GetSecurityMethodUseCase,
+    settingsStorage: SettingsStorage
 ) : ViewModel() {
 
     sealed interface State {
         data class AuthRequired(
             val enteredPinLength: Int = 0,
+            val pinLength: Int = PinConfig.PIN_LENGTH,
             val errorMessage: String? = null,
             val isLocked: Boolean = false,
             val lockSecondsRemaining: Int = 0,
@@ -46,11 +50,16 @@ class ExportMnemonicViewModel(
         data class Error(val message: String) : State
     }
 
-    private val _state = MutableStateFlow<State>(State.AuthRequired())
+    private val pinLength = settingsStorage.getString(SettingsKeys.PIN_LENGTH)
+        ?.toIntOrNull()
+        ?.takeIf { it in PinConfig.PIN_LENGTH_OPTIONS }
+        ?: PinConfig.PIN_LENGTH
+
+    private val _state = MutableStateFlow<State>(State.AuthRequired(pinLength = pinLength))
     val state: StateFlow<State> = _state.asStateFlow()
 
     // Auth PIN buffer (wipe-able, never an immutable String).
-    private val buffer = CharArray(PinConfig.PIN_LENGTH)
+    private val buffer = CharArray(pinLength)
     private var bufferLength = 0
     private val passwordBuffer = SecureTextFieldState()
 
@@ -126,12 +135,12 @@ class ExportMnemonicViewModel(
     fun addDigit(digit: Char) {
         val s = _state.value as? State.AuthRequired ?: return
         if (s.isLocked || s.isProcessing) return
-        if (bufferLength >= PinConfig.PIN_LENGTH) return
+        if (bufferLength >= s.pinLength) return
 
         buffer[bufferLength++] = digit
         updateAuth { it.copy(enteredPinLength = bufferLength, errorMessage = null) }
 
-        if (bufferLength == PinConfig.PIN_LENGTH) {
+        if (bufferLength == s.pinLength) {
             verifyPin()
         }
     }

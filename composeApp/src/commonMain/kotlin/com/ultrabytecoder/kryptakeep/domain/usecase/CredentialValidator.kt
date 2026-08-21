@@ -8,7 +8,8 @@ object CredentialValidator {
 
     fun validate(method: SecurityMethod, credential: CharArray): Result = when (method) {
         SecurityMethod.PIN -> {
-            if (credential.size != PinConfig.PIN_LENGTH) Result(false, "PIN must be ${PinConfig.PIN_LENGTH} digits")
+            if (credential.size !in PinConfig.PIN_LENGTH_OPTIONS)
+                Result(false, "PIN must be ${PinConfig.PIN_LENGTH_OPTIONS.joinToString(" or ")} digits")
             else if (!credential.all { it.isDigit() }) Result(false, "PIN must be digits only")
             else Result(true, null)
         }

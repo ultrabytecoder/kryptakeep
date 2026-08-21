@@ -36,7 +36,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
-import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.security.wipe
 import com.ultrabytecoder.kryptakeep.ui.components.Numpad
@@ -144,7 +143,7 @@ fun ChangePinScreen(
                 } else {
                     PinDotsInline(
                         enteredLength = state.enteredLength,
-                        pinLength = PinConfig.PIN_LENGTH
+                        pinLength = state.pinLength
                     )
                 }
 
