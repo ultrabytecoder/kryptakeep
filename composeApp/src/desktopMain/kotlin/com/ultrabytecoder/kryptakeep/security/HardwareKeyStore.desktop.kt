@@ -1,76 +1,56 @@
 package com.ultrabytecoder.kryptakeep.security
 
-import com.ultrabytecoder.kryptakeep.data.appDataDir
-import com.ultrabytecoder.kryptakeep.data.restrictFileToOwner
-import java.io.File
-import java.security.SecureRandom
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
+import com.ultrabytecoder.kryptakeep.security.hardware.DesktopOs
+import com.ultrabytecoder.kryptakeep.security.hardware.FileBackend
+import com.ultrabytecoder.kryptakeep.security.hardware.HardwareKeyBackend
+import com.ultrabytecoder.kryptakeep.security.hardware.MacOSBackend
+import com.ultrabytecoder.kryptakeep.security.hardware.OsDetector
+import com.ultrabytecoder.kryptakeep.security.hardware.WindowsBackend
 
 /**
- * Desktop device key.
+ * Desktop device key, dispatched to an OS-specific backend by [OsDetector]:
  *
- * There is no OS-backed keystore abstraction on plain JVM without extra native
- * dependencies, so the key is a random AES-256 key stored in
- * `<user.home>/.kryptakeep/.device_key` with owner-only permissions
- * (0600 on POSIX). This binds the key hierarchy to the app data directory —
- * the same threat-model position as Android Keystore, minus the hardware
- * backing (no StrongBox/TEE on desktop without TPM integration).
+ * - macOS: Secure Enclave P-256 (Keychain fallback) — [MacOSBackend] (follow-up commit).
+ * - Windows: DPAPI-protected key — [WindowsBackend] (follow-up commit).
+ * - Linux/other: [FileBackend] (libsecret backend — follow-up commit).
  *
- * The key file is created lazily on first [encrypt].
+ * Until the OS backends land, all platforms route to [FileBackend], preserving
+ * the previous behavior exactly.
  */
 actual object HardwareKeyStore {
 
-    private const val KEY_ALIAS = "kryptakeep_device_key"
-    private const val GCM_IV_LENGTH = 12
-    private const val GCM_TAG_BITS = 128
+    private val backend: HardwareKeyBackend = selectBackend()
 
-    private val baseDir = appDataDir()
-    private val keyFile = File(baseDir, ".device_key")
+    private val lock = Any()
 
-    private val keyLock = Any()
+    actual fun encrypt(plaintext: ByteArray): ByteArray = synchronized(lock) {
+        backend.encrypt(plaintext)
+    }
 
-    private fun getOrCreateSecretKey(): SecretKey = synchronized(keyLock) {
-        if (!keyFile.exists()) {
-            baseDir.mkdirs()
-            val keyGenerator = KeyGenerator.getInstance("AES")
-            keyGenerator.init(256)
-            val key = keyGenerator.generateKey()
-            keyFile.writeBytes(key.encoded)
-            restrictFileToOwner(keyFile)
-        }
-        val encoded = keyFile.readBytes()
-        javax.crypto.spec.SecretKeySpec(encoded, "AES").also {
-            encoded.wipe()
+    actual fun decrypt(encrypted: ByteArray): ByteArray = synchronized(lock) {
+        try {
+            backend.decrypt(encrypted)
+        } catch (e: HardwareKeyInvalidatedException) {
+            throw e
+        } catch (e: AesGcmAuthenticationException) {
+            throw e
+        } catch (e: Exception) {
+            throw HardwareKeyInvalidatedException("Device key backend '${backend.id}' failed: ${e.message}")
         }
     }
 
-    actual fun encrypt(plaintext: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
-        val ciphertext = cipher.doFinal(plaintext)
-        return cipher.iv + ciphertext
+    actual fun deleteKey() = synchronized(lock) {
+        backend.deleteKey()
     }
 
-    actual fun decrypt(encrypted: ByteArray): ByteArray {
-        if (!keyFile.exists()) {
-            throw HardwareKeyInvalidatedException("Device hardware key missing")
-        }
-        require(encrypted.size > GCM_IV_LENGTH) { "Encrypted data too short" }
-        val iv = encrypted.copyOfRange(0, GCM_IV_LENGTH)
-        val ciphertext = encrypted.copyOfRange(GCM_IV_LENGTH, encrypted.size)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
-        return try {
-            cipher.doFinal(ciphertext)
-        } catch (e: javax.crypto.AEADBadTagException) {
-            throw AesGcmAuthenticationException("Hardware GCM authentication failed")
-        }
-    }
+    /** Identifier of the active backend (for the UI badge). */
+    fun currentBackendId(): String = backend.id
 
-    actual fun deleteKey() {
-        keyFile.delete()
+    private fun selectBackend(): HardwareKeyBackend = when (OsDetector.current) {
+        DesktopOs.MAC -> MacOSBackend()
+        DesktopOs.WINDOWS -> WindowsBackend()
+        // LinuxBackend (libsecret) lands in a follow-up commit.
+        DesktopOs.LINUX -> FileBackend()
+        DesktopOs.OTHER -> FileBackend()
     }
 }
