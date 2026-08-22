@@ -1,101 +1,40 @@
 package com.ultrabytecoder.kryptakeep.security
 
-import android.os.Build
-import java.security.Key
-import javax.crypto.Mac
-import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.PBEKeySpec
+import org.bouncycastle.crypto.digests.SHA256Digest
+import org.bouncycastle.crypto.digests.SHA512Digest
+import org.bouncycastle.crypto.generators.PKCS5S2ParametersGenerator
+import org.bouncycastle.crypto.params.KeyParameter
 
 /**
- * Wraps the password bytes WITHOUT copying them (SecretKeySpec clones the array
- * into its own storage, which can then never be wiped — NEW-6). The caller owns
- * the referenced array and wipes it once the derivation is complete.
+ * PBKDF2-HMAC via BouncyCastle's [PKCS5S2ParametersGenerator], which consumes the
+ * password as a raw byte array.
+ *
+ * The previous implementation fed the password bytes through a `CharArray`
+ * (`byte.toInt().toChar()`) into the JCA `PBEKeySpec`. For any byte >= 0x80 that
+ * conversion sign-extends and truncates into the `\uFF80`–`\uFFFF` range, and the
+ * JCA provider then re-encodes those chars to UTF-8 — producing a different byte
+ * sequence than the original. That corrupted non-ASCII passwords and made
+ * derivations disagree across platforms (iOS uses the raw bytes) and across Android
+ * API levels (the manual Mac path used raw bytes). BouncyCastle removes the char
+ * round-trip entirely, so the password bytes are used verbatim on every platform.
  */
-private class NonCopyingSecretKey(
-    private val bytes: ByteArray
-) : Key {
-    override fun getAlgorithm(): String = "HmacSHA256"
-    override fun getFormat(): String = "RAW"
-    override fun getEncoded(): ByteArray = bytes
-}
-
 actual object Pbkdf2 {
     actual fun derive(
         password: ByteArray,
         salt: ByteArray,
         iterations: Int,
-        derivedKeyLengthBytes: Int
+        derivedKeyLengthBytes: Int,
+        algorithm: Pbkdf2Algorithm
     ): ByteArray {
-        // Prefer the audited, constant-time JCA implementation (API 26+).
-        // It keeps intermediate blocks inside the provider (no application-heap
-        // copies that would have to be wiped). Older API levels fall back to the
-        // manual Mac loop below, wiping every intermediate array.
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            deriveWithJca(password, salt, iterations, derivedKeyLengthBytes)
-        } else {
-            deriveWithMac(password, salt, iterations, derivedKeyLengthBytes)
+        val digest = when (algorithm) {
+            Pbkdf2Algorithm.SHA256 -> SHA256Digest()
+            Pbkdf2Algorithm.SHA512 -> SHA512Digest()
         }
-    }
-
-    private fun deriveWithJca(
-        password: ByteArray,
-        salt: ByteArray,
-        iterations: Int,
-        derivedKeyLengthBytes: Int
-    ): ByteArray {
-        val passwordChars = CharArray(password.size) { password[it].toInt().toChar() }
-        val spec = PBEKeySpec(passwordChars, salt, iterations, derivedKeyLengthBytes * 8)
-        return try {
-            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-                .generateSecret(spec).encoded
-        } finally {
-            spec.clearPassword()
-            passwordChars.fill('\u0000')
-        }
-    }
-
-    private fun deriveWithMac(
-        password: ByteArray,
-        salt: ByteArray,
-        iterations: Int,
-        derivedKeyLengthBytes: Int
-    ): ByteArray {
-        val mac = Mac.getInstance("HmacSHA256")
-        // Non-copying key: SecretKeySpec would clone the password bytes into
-        // unforgeable (unwipeable) storage. The provider may still retain an
-        // internal copy for the lifetime of the Mac — a known residual limitation
-        // of the JCA API on API < 26 devices.
-        mac.init(NonCopyingSecretKey(password))
-
-        val hashLength = 32
-        val blocksNeeded = (derivedKeyLengthBytes + hashLength - 1) / hashLength
-        val dk = ByteArray(derivedKeyLengthBytes)
-
-        for (blockIndex in 1..blocksNeeded) {
-            val saltWithCounter = salt + byteArrayOf(
-                (blockIndex shr 24).toByte(),
-                (blockIndex shr 16).toByte(),
-                (blockIndex shr 8).toByte(),
-                blockIndex.toByte()
-            )
-            val u = mac.doFinal(saltWithCounter)
-            val result = u.copyOf()
-            saltWithCounter.wipe()
-
-            for (i in 2..iterations) {
-                val nextU = mac.doFinal(u)
-                for (j in result.indices) {
-                    result[j] = (result[j].toInt() xor nextU[j].toInt()).toByte()
-                }
-                System.arraycopy(nextU, 0, u, 0, nextU.size)
-                nextU.wipe()
-            }
-
-            val copyLength = minOf(hashLength, derivedKeyLengthBytes - (blockIndex - 1) * hashLength)
-            System.arraycopy(result, 0, dk, (blockIndex - 1) * hashLength, copyLength)
-            result.wipe()
-            u.wipe()
-        }
-        return dk
+        val generator = PKCS5S2ParametersGenerator(digest)
+        generator.init(password, salt, iterations)
+        val key = (generator.generateDerivedParameters(derivedKeyLengthBytes * 8) as KeyParameter).key
+        // The generator copies the password into its own state during init(); the
+        // caller still owns [password] and wipes it after this call returns.
+        return key
     }
 }

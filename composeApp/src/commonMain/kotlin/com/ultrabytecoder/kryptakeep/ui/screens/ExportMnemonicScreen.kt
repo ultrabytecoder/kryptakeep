@@ -60,6 +60,7 @@ import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.platform.preventScreenshots
 import com.ultrabytecoder.kryptakeep.security.wipe
 import com.ultrabytecoder.kryptakeep.ui.components.Numpad
+import com.ultrabytecoder.kryptakeep.ui.util.SecureScreen
 import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.ExportMnemonicViewModel
 import kotlinx.coroutines.delay
@@ -70,11 +71,26 @@ fun ExportMnemonicScreen(
     navController: NavController,
     viewModel: ExportMnemonicViewModel
 ) {
+    SecureScreen {
+        ExportMnemonicScreenInner(navController, viewModel)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExportMnemonicScreenInner(
+    navController: NavController,
+    viewModel: ExportMnemonicViewModel
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var mnemonicVisible by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
     val passwordField = remember { SecureTextFieldState() }
+
+    remember {
+        viewModel.onClipboardClear = { clipboardManager.setText(AnnotatedString("")) }
+    }
     val focusRequester = remember { FocusRequester() }
 
     DisposableEffect(Unit) {
@@ -91,10 +107,6 @@ fun ExportMnemonicScreen(
         if (copied) {
             delay(2000)
             copied = false
-            // NEW-7: clear the copied recovery phrase from the system clipboard
-            // shortly after copying, so it does not linger for other apps to read.
-            delay(28_000)
-            clipboardManager.setText(AnnotatedString(""))
         }
     }
 
@@ -334,6 +346,7 @@ fun ExportMnemonicScreen(
                             mnemonicText?.let {
                                 clipboardManager.setText(AnnotatedString(it))
                                 copied = true
+                                viewModel.scheduleClipboardClear()
                             }
                         },
                         enabled = mnemonicVisible,

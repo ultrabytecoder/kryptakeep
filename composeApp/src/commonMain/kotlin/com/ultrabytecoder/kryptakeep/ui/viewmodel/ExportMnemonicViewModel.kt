@@ -193,6 +193,13 @@ class ExportMnemonicViewModel(
                     is VerifyResult.Corrupted -> {
                         _state.value = State.Error("PIN data is corrupted. Wallet recovery is required.")
                     }
+                    is VerifyResult.SessionLocked -> updateAuth {
+                        it.copy(
+                            isProcessing = false,
+                            enteredPinLength = 0,
+                            errorMessage = "Session locked, please try again"
+                        )
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -243,6 +250,13 @@ class ExportMnemonicViewModel(
                     is VerifyResult.Corrupted -> {
                         _state.value = State.Error("PIN data is corrupted. Wallet recovery is required.")
                     }
+                    is VerifyResult.SessionLocked -> updateAuth {
+                        it.copy(
+                            isProcessing = false,
+                            enteredPinLength = 0,
+                            errorMessage = "Session locked, please try again"
+                        )
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -281,6 +295,19 @@ class ExportMnemonicViewModel(
             _state.value = State.Error(e.message ?: "Failed to load mnemonic")
         }
     }
+
+    /**
+     * Schedules a 30-second delayed clipboard clear. Survives composable
+     * disposal because it runs in [viewModelScope], not in a LaunchedEffect.
+     */
+    fun scheduleClipboardClear() {
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(30_000)
+            onClipboardClear()
+        }
+    }
+
+    var onClipboardClear: () -> Unit = {}
 
     /**
      * Wipes any loaded mnemonic and resets the screen to the auth state.

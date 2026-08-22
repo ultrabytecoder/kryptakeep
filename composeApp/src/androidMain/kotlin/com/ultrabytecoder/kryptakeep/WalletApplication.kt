@@ -38,6 +38,8 @@ class MyApplication : Application(), KoinComponent {
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 topActivity = activity
+                // User activity resets the session idle timeout (F-5).
+                sessionManager.registerActivity()
             }
 
             override fun onActivityStopped(activity: Activity) {

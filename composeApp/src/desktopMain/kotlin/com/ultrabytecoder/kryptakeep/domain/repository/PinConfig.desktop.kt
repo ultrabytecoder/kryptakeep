@@ -10,6 +10,10 @@ actual object PinConfig {
     actual val MAX_ATTEMPTS = 5
     actual val INITIAL_LOCKOUT = 1.minutes
     actual val MAX_LOCKOUT = 60.minutes
-    actual val PBKDF2_ITERATIONS = 600_000
+    actual val KDF_TIME_COST_PIN = 3
+    actual val KDF_TIME_COST_PASSWORD = 3
+    actual val KDF_MEMORY_KIB = 65536
+    actual val KDF_PARALLELISM = 1
     actual val SALT_SIZE = 32
+    actual val PBKDF2_FALLBACK_ITERATIONS = 600_000
 }

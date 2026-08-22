@@ -1,5 +1,6 @@
 package com.ultrabytecoder.kryptakeep.domain.repository
 
+import com.ultrabytecoder.kryptakeep.security.SecretCipher
 import kotlinx.coroutines.flow.StateFlow
 
 sealed interface PinState {
@@ -29,11 +30,11 @@ interface PinRepository {
     val securityMethodFlow: StateFlow<SecurityMethod?>
     suspend fun setupPin(pin: CharArray, method: SecurityMethod)
     suspend fun verifyPin(pin: CharArray): VerifyResult
-    suspend fun resetLockState()
 
     /**
-     * Changes the credential: verifies [oldPin], re-wraps the DEK envelope with [newPin]
-     * and re-encrypts every stored mnemonic with [newPin] (all-or-nothing).
+     * Changes the credential: verifies [oldPin], re-wraps the DEK envelope with [newPin].
+     * The mnemonic is wrapped by the device hardware key ([SecretCipher]), independent
+     * of the PIN, so no re-encryption of stored secrets is needed on PIN change.
      * [newMethod] is the security method the new credential uses.
      */
     suspend fun changePin(oldPin: CharArray, newPin: CharArray, newMethod: SecurityMethod): ChangePinResult

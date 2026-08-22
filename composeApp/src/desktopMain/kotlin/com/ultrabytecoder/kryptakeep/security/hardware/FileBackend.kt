@@ -65,6 +65,7 @@ class FileBackend : HardwareKeyBackend {
     private fun createOwnerOnlyFile(file: File) {
         if (OsDetector.isWindows) {
             file.createNewFile()
+            restrictWindowsFileToOwner(file)
             return
         }
         try {
@@ -82,14 +83,64 @@ class FileBackend : HardwareKeyBackend {
         }
     }
 
-    override fun encrypt(plaintext: ByteArray): ByteArray {
+    /**
+     * Restricts a Windows file to the current user (owner read/write only) via the
+     * NTFS ACL. Uses reflection because the `java.nio.file.attribute` ACL classes
+     * are only present on the Windows JDK and would fail to compile on Linux/macOS.
+     * Best-effort: if the filesystem does not support ACLs (e.g. a non-NTFS volume)
+     * or the classes are unavailable, the restriction is skipped rather than
+     * failing key setup.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun restrictWindowsFileToOwner(file: File) {
+        try {
+            val path = file.toPath()
+            val aclViewClass = Class.forName("java.nio.file.attribute.AclFileAttributeView")
+            val aclView = Files.getFileAttributeView<java.nio.file.attribute.FileAttributeView>(
+                path,
+                aclViewClass as Class<java.nio.file.attribute.FileAttributeView>
+            ) ?: return
+            val owner = aclViewClass.getMethod("getOwner").invoke(aclView)
+            val ownerName = (owner as java.nio.file.attribute.UserPrincipal).name
+
+            // UserPrincipalLookupService is obtained from the FileSystem, not via
+            // a static factory method.
+            val fileSystem = path.fileSystem
+            val lookupService = fileSystem.userPrincipalLookupService
+            val identity = lookupService.lookupPrincipalByName(ownerName)
+
+            val entryClass = Class.forName("java.nio.file.attribute.FileAclEntry")
+            val builder = entryClass.getMethod("newBuilder").invoke(null)
+            val permClass = Class.forName("java.nio.file.attribute.FileAclEntryPermission")
+            val readData = permClass.getField("READ_DATA").get(null)
+            val writeData = permClass.getField("WRITE_DATA").get(null)
+            val typeClass = Class.forName("java.nio.file.attribute.FileAclEntryType")
+            val allow = typeClass.getField("ALLOW").get(null)
+
+            builder.javaClass.getMethod("setPrincipal", java.nio.file.attribute.UserPrincipal::class.java)
+                .invoke(builder, identity)
+            builder.javaClass.getMethod("setPermissions", java.util.Set::class.java)
+                .invoke(builder, setOf(readData, writeData))
+            builder.javaClass.getMethod("setType", typeClass).invoke(builder, allow)
+            val entry = entryClass.getMethod("build").invoke(builder)
+
+            aclViewClass.getMethod("setAcl", java.util.List::class.java)
+                .invoke(aclView, listOf(entry))
+        } catch (_: Exception) {
+            // ACL not supported, classes unavailable, or permission denied —
+            // leave the file as-is.
+        }
+    }
+
+    override fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+        if (aad.isNotEmpty()) cipher.updateAAD(aad)
         val ciphertext = cipher.doFinal(plaintext)
         return cipher.iv + ciphertext
     }
 
-    override fun decrypt(encrypted: ByteArray): ByteArray {
+    override fun decrypt(encrypted: ByteArray, aad: ByteArray): ByteArray {
         if (!keyFile.exists()) {
             throw HardwareKeyInvalidatedException("Device hardware key missing")
         }
@@ -98,6 +149,7 @@ class FileBackend : HardwareKeyBackend {
         val ciphertext = encrypted.copyOfRange(GCM_IV_LENGTH, encrypted.size)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+        if (aad.isNotEmpty()) cipher.updateAAD(aad)
         return try {
             cipher.doFinal(ciphertext)
         } catch (e: javax.crypto.AEADBadTagException) {

@@ -4,6 +4,9 @@ import app.cash.sqldelight.db.SqlDriver
 import com.ultrabytecoder.kryptakeep.db.KryptaKeepDatabase
 import com.ultrabytecoder.kryptakeep.sqlcipher.NativeSqlCipherDriver
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -20,8 +23,19 @@ actual class DatabaseDriverFactory actual constructor(context: Any?) {
     private val dbFile = File(baseDir, "kryptakeep.db")
 
     actual suspend fun createDriver(passphrase: ByteArray): SqlDriver = withContext(Dispatchers.IO) {
-        baseDir.mkdirs()
-        restrictToOwner(baseDir)
+        if (!baseDir.exists()) {
+            try {
+                Files.createDirectories(
+                    baseDir.toPath(),
+                    PosixFilePermissions.asFileAttribute(
+                        setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE)
+                    )
+                )
+            } catch (_: UnsupportedOperationException) {
+                baseDir.mkdirs()
+                restrictToOwner(baseDir)
+            }
+        }
 
         // The driver copies and zeroes the key during construction (sqlite3_key_v2
         // derives its KEK immediately); the caller keeps ownership of [passphrase].

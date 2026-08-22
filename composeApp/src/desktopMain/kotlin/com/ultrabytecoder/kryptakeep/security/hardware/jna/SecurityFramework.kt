@@ -42,6 +42,7 @@ interface SecurityFramework : Library {
         val K_SEC_ATTR_KEY_SIZE_IN_BITS: CFStringRef = cfStringGlobal("kSecAttrKeySizeInBits")
         val K_SEC_ATTR_LABEL: CFStringRef = cfStringGlobal("kSecAttrLabel")
         val K_SEC_ATTR_ACCESS_CONTROL: CFStringRef = cfStringGlobal("kSecAttrAccessControl")
+        val K_SEC_ATTR_ACCESSIBLE: CFStringRef = cfStringGlobal("kSecAttrAccessible")
         val K_SEC_ATTR_ACCESSIBLE_WHEN_UNLOCKED_THIS_DEVICE_ONLY: CFStringRef =
             cfStringGlobal("kSecAttrAccessibleWhenUnlockedThisDeviceOnly")
         val K_SEC_ATTR_SERVICE: CFStringRef = cfStringGlobal("kSecAttrService")

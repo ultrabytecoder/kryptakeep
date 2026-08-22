@@ -213,6 +213,15 @@ class EnterPinViewModel(
                         _state.update { it.copy(isProcessing = false) }
                         _events.tryEmit(EnterPinEvent.NavigateToRecovery)
                     }
+                    is VerifyResult.SessionLocked -> {
+                        _state.update {
+                            it.copy(
+                                isProcessing = false,
+                                enteredPinLength = 0,
+                                errorMessage = "Session locked, please try again"
+                            )
+                        }
+                    }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -269,6 +278,15 @@ class EnterPinViewModel(
                     is VerifyResult.Corrupted -> {
                         _state.update { it.copy(isProcessing = false) }
                         _events.tryEmit(EnterPinEvent.NavigateToRecovery)
+                    }
+                    is VerifyResult.SessionLocked -> {
+                        _state.update {
+                            it.copy(
+                                isProcessing = false,
+                                enteredPinLength = 0,
+                                errorMessage = "Session locked, please try again"
+                            )
+                        }
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {

@@ -16,7 +16,7 @@ import java.util.concurrent.locks.ReentrantLock
  * was acknowledged to the caller (same commit()-like contract as the Android
  * SharedPreferences implementation).
  */
-actual class SettingsStorage actual constructor(context: Any?) {
+actual class SettingsStorage actual constructor(context: Any?) : SettingsStore {
     private val baseDir: File = (context as? File) ?: appDataDir()
     private val file = File(baseDir, "settings.properties")
 
@@ -40,16 +40,16 @@ actual class SettingsStorage actual constructor(context: Any?) {
         }
     }
 
-    actual fun putString(key: String, value: String) {
+    actual override fun putString(key: String, value: String) {
         lock.withLock {
             properties.setProperty(key, value)
             save()
         }
     }
 
-    actual fun getString(key: String): String? = lock.withLock { properties.getProperty(key) }
+    actual override fun getString(key: String): String? = lock.withLock { properties.getProperty(key) }
 
-    actual fun remove(key: String) {
+    actual override fun remove(key: String) {
         lock.withLock {
             properties.remove(key)
             save()

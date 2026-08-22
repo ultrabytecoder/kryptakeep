@@ -28,6 +28,10 @@ actual object AesGcm {
     private const val GCM_TAG_LENGTH = 16
 
     actual fun encrypt(key: ByteArray, plaintext: ByteArray, aad: ByteArray): ByteArray {
+        // The key size is passed to CommonCrypto as the fixed kCCSizeAES256 (32).
+        // Validate up front so a shorter/longer key can never cause a native
+        // over-read of the key buffer (defense in depth — the KDF always yields 32).
+        require(key.size == 32) { "AES-256-GCM requires a 32-byte key, got ${key.size}" }
         val iv = ByteArray(GCM_IV_LENGTH).also {
             arc4random_buf(it.refTo(0), GCM_IV_LENGTH.toULong())
         }
@@ -93,6 +97,7 @@ actual object AesGcm {
     }
 
     actual fun decrypt(key: ByteArray, encrypted: ByteArray, aad: ByteArray): ByteArray {
+        require(key.size == 32) { "AES-256-GCM requires a 32-byte key, got ${key.size}" }
         require(encrypted.size > GCM_IV_LENGTH + GCM_TAG_LENGTH) { "Encrypted data too short" }
 
         val iv = encrypted.copyOfRange(0, GCM_IV_LENGTH)

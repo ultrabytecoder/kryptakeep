@@ -37,6 +37,9 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.SyncUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.VerifyPinUseCase
 import com.ultrabytecoder.kryptakeep.security.KeyManager
 import com.ultrabytecoder.kryptakeep.security.SessionManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
@@ -46,7 +49,8 @@ fun appModule(networkConfig: NetworkConfig) = module {
 
     // Security: envelope key management + lazy session (DB opens only after unlock)
     single { KeyManager(get()) }
-    single { SessionManager(get()) }
+    single { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+    single { SessionManager(get(), get()) }
     single<DatabaseProvider> { get<SessionManager>() }
 
     single<AccountRepository> { com.ultrabytecoder.kryptakeep.data.AccountRepository(get()) }

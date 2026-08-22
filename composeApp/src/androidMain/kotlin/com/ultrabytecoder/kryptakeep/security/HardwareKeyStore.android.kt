@@ -75,14 +75,15 @@ actual object HardwareKeyStore {
         return builder.build()
     }
 
-    actual fun encrypt(plaintext: ByteArray): ByteArray {
+    actual fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+        if (aad.isNotEmpty()) cipher.updateAAD(aad)
         val ciphertext = cipher.doFinal(plaintext)
         return cipher.iv + ciphertext
     }
 
-    actual fun decrypt(encrypted: ByteArray): ByteArray {
+    actual fun decrypt(encrypted: ByteArray, aad: ByteArray): ByteArray {
         if (!keyStore.containsAlias(KEY_ALIAS)) {
             throw HardwareKeyInvalidatedException("Device hardware key missing")
         }
@@ -91,6 +92,7 @@ actual object HardwareKeyStore {
         val ciphertext = encrypted.copyOfRange(GCM_IV_LENGTH, encrypted.size)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+        if (aad.isNotEmpty()) cipher.updateAAD(aad)
         return try {
             cipher.doFinal(ciphertext)
         } catch (e: AEADBadTagException) {
@@ -104,5 +106,13 @@ actual object HardwareKeyStore {
         } catch (_: Exception) {
             // Key already gone or Keystore unavailable — nothing to clean up.
         }
+    }
+
+    actual fun purgeCache() {
+        // The Android Keystore key never leaves the Keystore — nothing cached to purge.
+    }
+
+    actual fun configureInstallId(id: ByteArray) {
+        // The Keystore key is already device-bound — no install-id binding needed.
     }
 }

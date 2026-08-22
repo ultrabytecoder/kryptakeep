@@ -8,14 +8,9 @@ package com.ultrabytecoder.kryptakeep.security
  * exfiltration) does not reveal the secret, and the ciphertext is useless on
  * another device.
  *
- * Format: `"KRYPT" || 0x01 || HardwareKeyStore.encrypt(plaintext)`. The magic
- * prefix distinguishes new ciphertext from legacy plaintext BLOBs written by
- * pre-hardware-encryption installs. Detection must be unambiguous for both kinds
- * of legacy data:
- *  - mnemonics are printable ASCII (words and spaces) — cannot contain the 0x01
- *    control byte;
- *  - legacy seeds are 64 random bytes — matching the 5-byte magic + version has
- *    probability 2^-48, so a false "encrypted" detection is practically impossible.
+ * Format: `"KRYPT" || 0x01 || HardwareKeyStore.encrypt(plaintext)`. Every stored
+ * secret BLOB is hardware-encrypted from creation — the magic prefix is a
+ * structural invariant, not a format discriminator.
  */
 object SecretCipher {
 
@@ -37,10 +32,7 @@ object SecretCipher {
     }
 
     /**
-     * Decrypts a stored secret BLOB:
-     * - [Result.Encrypted]: magic present — decrypted with the device hardware key.
-     * - [Result.Legacy]: no magic — pre-hardware-encryption plaintext, returned as-is
-     *   (the caller may re-encrypt it in place).
+     * Decrypts a stored secret BLOB with the device hardware key.
      *
      * @throws HardwareKeyInvalidatedException when the device key is missing/invalidated
      * and the stored blob is hardware-encrypted — the secret is unrecoverable.
@@ -49,23 +41,18 @@ object SecretCipher {
      */
     fun decrypt(stored: ByteArray): Result {
         if (!stored.startsWith(MAGIC)) {
-            return Result.Legacy(stored)
+            throw AesGcmAuthenticationException("Stored secret blob is not hardware-encrypted")
         }
         val blob = stored.copyOfRange(MAGIC.size, stored.size)
         return try {
-            Result.Encrypted(HardwareKeyStore.decrypt(blob))
+            Result(HardwareKeyStore.decrypt(blob))
         } finally {
             blob.wipe()
         }
     }
 
-    sealed interface Result {
-        /** Decrypted with the device hardware key; [plaintext] is a fresh array. */
-        class Encrypted(val plaintext: ByteArray) : Result
-
-        /** Legacy plaintext blob ([plaintext] is the stored array itself, not a copy). */
-        class Legacy(val plaintext: ByteArray) : Result
-    }
+    /** Decrypted with the device hardware key; [plaintext] is a fresh array. */
+    class Result(val plaintext: ByteArray)
 
     private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
         if (size < prefix.size) return false

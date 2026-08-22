@@ -13,7 +13,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import fr.acinq.bitcoin.MnemonicCode
+import com.ultrabytecoder.kryptakeep.security.SecureMnemonicCode
+import com.ultrabytecoder.kryptakeep.security.wipe
 import org.kotlincrypto.random.CryptoRand
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Eye
@@ -107,7 +108,16 @@ fun CreateWalletScreen(
             TextButton(
                 onClick = {
                     val entropy = CryptoRand.Default.nextBytes(ByteArray(32))
-                    mnemonicState.update(MnemonicCode.toMnemonics(entropy).joinToString(" "))
+                    val mnemonic = SecureMnemonicCode.generate(entropy)
+                    entropy.wipe()
+                    try {
+                        mnemonicState.update(mnemonic.concatToString())
+                    } finally {
+                        // The CharArray is no longer needed once the immutable String
+                        // copy is in the text field — wipe it so the mnemonic does not
+                        // linger in a mutable buffer until GC.
+                        mnemonic.wipe()
+                    }
                     mnemonicError = null
                 },
                 modifier = Modifier.align(Alignment.End)

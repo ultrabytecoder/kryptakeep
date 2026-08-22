@@ -16,11 +16,14 @@ interface HardwareKeyBackend {
     val id: String
 
     /** Encrypts [plaintext] with the device key (creating the key on first use). */
-    fun encrypt(plaintext: ByteArray): ByteArray
+    fun encrypt(plaintext: ByteArray, aad: ByteArray = ByteArray(0)): ByteArray
 
     /** Decrypts [encrypted] with the device key. */
-    fun decrypt(encrypted: ByteArray): ByteArray
+    fun decrypt(encrypted: ByteArray, aad: ByteArray = ByteArray(0)): ByteArray
 
     /** Deletes the device key. The key is re-created lazily on the next [encrypt]. */
     fun deleteKey()
+
+    /** Wipes any in-process cache of the unwrapped device key (no-op by default). */
+    fun purgeCache() {}
 }

@@ -55,7 +55,29 @@ class WindowsBackend : HardwareKeyBackend {
     @Volatile
     private var cachedKey: ByteArray? = null
 
+    @Volatile
+    private var installId: ByteArray? = null
+
     private val lock = Any()
+
+    /**
+     * Binds the DPAPI blob to the install ID (F-11): the entropy becomes
+     * SHA-256(DPAPI_ENTROPY || installId). Must be called before the first
+     * [encrypt]/[decrypt] (KeyManager.init does this at startup).
+     */
+    fun setInstallId(id: ByteArray) {
+        synchronized(lock) {
+            installId = id.copyOf()
+        }
+    }
+
+    private fun effectiveEntropy(): ByteArray {
+        val id = installId ?: return DPAPI_ENTROPY
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        md.update(DPAPI_ENTROPY)
+        md.update(id)
+        return md.digest()
+    }
 
     /** Loads the cached/stored key, creating it on first use (encrypt path). */
     private fun getOrCreateKey(): ByteArray = synchronized(lock) {
@@ -106,12 +128,13 @@ class WindowsBackend : HardwareKeyBackend {
         }
     }
 
-    override fun encrypt(plaintext: ByteArray): ByteArray = AesGcm.encrypt(getOrCreateKey(), plaintext)
+    override fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray =
+        AesGcm.encrypt(getOrCreateKey(), plaintext, aad)
 
-    override fun decrypt(encrypted: ByteArray): ByteArray {
+    override fun decrypt(encrypted: ByteArray, aad: ByteArray): ByteArray {
         val key = getKeyOrThrow()
         return try {
-            AesGcm.decrypt(key, encrypted)
+            AesGcm.decrypt(key, encrypted, aad)
         } catch (e: AesGcmAuthenticationException) {
             throw e
         } catch (e: Exception) {
@@ -123,15 +146,25 @@ class WindowsBackend : HardwareKeyBackend {
         synchronized(lock) {
             cachedKey?.wipe()
             cachedKey = null
+            installId?.wipe()
+            installId = null
             blobFile.delete()
         }
     }
 
+    override fun purgeCache() {
+        synchronized(lock) {
+            cachedKey?.wipe()
+            cachedKey = null
+        }
+    }
+
     private fun dpapiProtect(plaintext: ByteArray): ByteArray {
+        val entropy = effectiveEntropy()
         val inMem = Memory(plaintext.size.toLong()).also { it.write(0, plaintext, 0, plaintext.size) }
-        val entropyMem = Memory(DPAPI_ENTROPY.size.toLong()).also { it.write(0, DPAPI_ENTROPY, 0, DPAPI_ENTROPY.size) }
+        val entropyMem = Memory(entropy.size.toLong()).also { it.write(0, entropy, 0, entropy.size) }
         val inBlob = DataBlob().apply { cbData = plaintext.size; pbData = inMem }
-        val entropyBlob = DataBlob().apply { cbData = DPAPI_ENTROPY.size; pbData = entropyMem }
+        val entropyBlob = DataBlob().apply { cbData = entropy.size; pbData = entropyMem }
         val outBlob = DataBlob()
         try {
             val ok = Crypt32.INSTANCE.CryptProtectData(
@@ -144,15 +177,17 @@ class WindowsBackend : HardwareKeyBackend {
         } finally {
             inMem.clear()
             entropyMem.clear()
+            entropy.wipe()
             outBlob.pbData?.let { Kernel32.INSTANCE.LocalFree(it) }
         }
     }
 
     private fun dpapiUnprotect(wrapped: ByteArray): ByteArray {
+        val entropy = effectiveEntropy()
         val inMem = Memory(wrapped.size.toLong()).also { it.write(0, wrapped, 0, wrapped.size) }
-        val entropyMem = Memory(DPAPI_ENTROPY.size.toLong()).also { it.write(0, DPAPI_ENTROPY, 0, DPAPI_ENTROPY.size) }
+        val entropyMem = Memory(entropy.size.toLong()).also { it.write(0, entropy, 0, entropy.size) }
         val inBlob = DataBlob().apply { cbData = wrapped.size; pbData = inMem }
-        val entropyBlob = DataBlob().apply { cbData = DPAPI_ENTROPY.size; pbData = entropyMem }
+        val entropyBlob = DataBlob().apply { cbData = entropy.size; pbData = entropyMem }
         val outBlob = DataBlob()
         try {
             val ok = Crypt32.INSTANCE.CryptUnprotectData(
@@ -165,6 +200,7 @@ class WindowsBackend : HardwareKeyBackend {
         } finally {
             inMem.clear()
             entropyMem.clear()
+            entropy.wipe()
             outBlob.pbData?.let { Kernel32.INSTANCE.LocalFree(it) }
         }
     }

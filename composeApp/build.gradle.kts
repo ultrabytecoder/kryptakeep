@@ -43,6 +43,19 @@ kotlin {
             create("CommonCrypto") {
                 defFile = File(projectDir, "src/iosMain/cinterop/CommonCrypto.def")
             }
+            create("libsodium") {
+                defFile = File(projectDir, "src/iosMain/cinterop/libsodium.def")
+                // Per-target static lib location (built by scripts/build-libsodium-ios.sh).
+                val archDir = when (iosTarget.name) {
+                    "iosArm64" -> "ios-arm64"
+                    "iosSimulatorArm64" -> "ios-sim-arm64"
+                    else -> error("unexpected iOS target ${iosTarget.name}")
+                }
+                val libDir = File(projectDir, "nativeLibs/libsodium/$archDir/lib")
+                val incDir = File(projectDir, "nativeLibs/libsodium/$archDir/include")
+                includeDirs(incDir)
+                extraOpts("-libraryPath", libDir.absolutePath)
+            }
         }
     }
 
@@ -55,9 +68,11 @@ kotlin {
             implementation(libs.sqldelight.android.driver)
             implementation(libs.sqlcipher.android)
             implementation(libs.androidx.sqlite)
+            implementation(libs.androidx.security.crypto)
             implementation(libs.koin.android)
             implementation(libs.ktor.client.okhttp)
             implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.23.0")
+            implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
             implementation("com.journeyapps:zxing-android-embedded:4.3.0")
             implementation("androidx.camera:camera-core:1.6.1")
             implementation("androidx.camera:camera-camera2:1.6.1")
@@ -65,6 +80,7 @@ kotlin {
             implementation("androidx.camera:camera-view:1.6.1")
         }
         commonMain.dependencies {
+            implementation(libs.kotlinx.coroutines.core)
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
             implementation(libs.compose.material3)
@@ -129,6 +145,7 @@ kotlin {
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.ktor.client.okhttp)
                 implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-jvm-$desktopJniTarget:0.23.0")
+                implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
             }
         }
         commonTest.dependencies {
@@ -204,6 +221,7 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
     }
     buildTypes {

@@ -29,23 +29,10 @@ class WalletRepository(private val databaseProvider: DatabaseProvider) : WalletR
     override suspend fun getMasterSeed(id: Long): ByteArray? = withContext(Dispatchers.IO) {
         val stored = queries.selectWalletById(id).executeAsOneOrNull()?.master_seed
             ?: return@withContext null
-        when (val result = SecretCipher.decrypt(stored)) {
-            is SecretCipher.Result.Encrypted -> {
-                stored.wipe()
-                result.plaintext
-            }
-            is SecretCipher.Result.Legacy -> {
-                // Best-effort lazy migration of pre-hardware-encryption installs:
-                // re-wrap in place; on failure the legacy plaintext stays usable.
-                val encrypted = SecretCipher.encrypt(result.plaintext)
-                try {
-                    queries.updateMasterSeed(encrypted, id)
-                } catch (_: Exception) {
-                } finally {
-                    encrypted.wipe()
-                }
-                result.plaintext
-            }
+        try {
+            SecretCipher.decrypt(stored).plaintext
+        } finally {
+            stored.wipe()
         }
     }
 
@@ -68,23 +55,10 @@ class WalletRepository(private val databaseProvider: DatabaseProvider) : WalletR
     override suspend fun getStoredMnemonic(id: Long): ByteArray? = withContext(Dispatchers.IO) {
         val stored = queries.selectWalletById(id).executeAsOneOrNull()?.mnemonic
             ?: return@withContext null
-        when (val result = SecretCipher.decrypt(stored)) {
-            is SecretCipher.Result.Encrypted -> {
-                stored.wipe()
-                result.plaintext
-            }
-            is SecretCipher.Result.Legacy -> {
-                // Best-effort lazy migration of pre-hardware-encryption installs:
-                // re-wrap in place; on failure the legacy plaintext stays usable.
-                val encrypted = SecretCipher.encrypt(result.plaintext)
-                try {
-                    queries.updateMnemonic(encrypted, id)
-                } catch (_: Exception) {
-                } finally {
-                    encrypted.wipe()
-                }
-                result.plaintext
-            }
+        try {
+            SecretCipher.decrypt(stored).plaintext
+        } finally {
+            stored.wipe()
         }
     }
 

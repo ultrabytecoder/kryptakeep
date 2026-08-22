@@ -12,6 +12,8 @@ import com.ultrabytecoder.kryptakeep.security.hardware.jna.SecKeyRef
 import com.ultrabytecoder.kryptakeep.security.hardware.jna.SecurityFramework
 import com.ultrabytecoder.kryptakeep.security.wipe
 import org.kotlincrypto.random.CryptoRand
+import java.util.logging.Level
+import java.util.logging.Logger
 
 /**
  * macOS device key.
@@ -44,41 +46,43 @@ class MacOSBackend : HardwareKeyBackend {
 
     private val sec = SecurityFramework.INSTANCE
 
+    private val log = Logger.getLogger("kryptakeep.macos")
+
     @Volatile
     private var keychainKey: ByteArray? = null
 
     private val lock = Any()
 
-    override fun encrypt(plaintext: ByteArray): ByteArray {
+    override fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
         // SE path: find the existing key, create it on first use. Creation
         // fails (null) only when the Secure Enclave is unavailable (Intel Mac
         // without T2, sandbox without entitlement) -> Keychain fallback.
         val seKey = findSeKey() ?: createSeKey()
         if (seKey != null) {
             return try {
-                seEncrypt(seKey, plaintext)
+                seEncrypt(seKey, plaintext, aad)
             } finally {
                 Cf.release(seKey)
             }
         }
         val aesKey = keychainKeyOrCreate()
-        return AesGcm.encrypt(aesKey, plaintext)
+        return AesGcm.encrypt(aesKey, plaintext, aad)
     }
 
-    override fun decrypt(encrypted: ByteArray): ByteArray {
+    override fun decrypt(encrypted: ByteArray, aad: ByteArray): ByteArray {
         // Decrypt must never create a key: a missing key means the ciphertext
         // is undecryptable -> HardwareKeyInvalidatedException (PIN re-setup).
         val seKey = findSeKey()
         if (seKey != null) {
             return try {
-                seDecrypt(seKey, encrypted)
+                seDecrypt(seKey, encrypted, aad)
             } finally {
                 Cf.release(seKey)
             }
         }
         val aesKey = keychainKeyOrThrow()
         return try {
-            AesGcm.decrypt(aesKey, encrypted)
+            AesGcm.decrypt(aesKey, encrypted, aad)
         } catch (e: AesGcmAuthenticationException) {
             throw e
         } catch (e: Exception) {
@@ -93,6 +97,13 @@ class MacOSBackend : HardwareKeyBackend {
         }
         deleteSeKey()
         deleteKeychainItem()
+    }
+
+    override fun purgeCache() {
+        synchronized(lock) {
+            keychainKey?.wipe()
+            keychainKey = null
+        }
     }
 
     // --- Secure Enclave path -------------------------------------------------
@@ -141,7 +152,7 @@ class MacOSBackend : HardwareKeyBackend {
                 // SE unavailable (Intel Mac without T2, sandbox without the
                 // com.apple.developer.secure-enclave entitlement) -> fallback.
                 val code = Cf.cfErrorCode(error)
-                System.err.println("kryptakeep: Secure Enclave key creation failed (CFError $code), using Keychain fallback")
+                log.log(Level.INFO, "Secure Enclave key creation failed (CFError $code), using Keychain fallback")
             }
             return key
         } finally {
@@ -150,11 +161,21 @@ class MacOSBackend : HardwareKeyBackend {
         }
     }
 
-    private fun seEncrypt(key: SecKeyRef, plaintext: ByteArray): ByteArray {
+    private fun seEncrypt(key: SecKeyRef, plaintext: ByteArray, aad: ByteArray): ByteArray {
         val publicKey = sec.SecKeyCopyPublicKey(key)
             ?: throw IllegalStateException("Failed to export Secure Enclave public key")
         try {
-            val data = Cf.cfData(plaintext)
+            val bound = if (aad.isNotEmpty()) {
+                ByteArray(4 + aad.size + plaintext.size).also { out ->
+                    out[0] = (aad.size shr 24).toByte()
+                    out[1] = (aad.size shr 16).toByte()
+                    out[2] = (aad.size shr 8).toByte()
+                    out[3] = aad.size.toByte()
+                    aad.copyInto(out, 4)
+                    plaintext.copyInto(out, 4 + aad.size)
+                }
+            } else plaintext
+            val data = Cf.cfData(bound)
             try {
                 val error = Cf.outPtr()
                 val encrypted = sec.SecKeyCreateEncryptedData(
@@ -170,13 +191,14 @@ class MacOSBackend : HardwareKeyBackend {
                 }
             } finally {
                 Cf.release(data)
+                if (aad.isNotEmpty()) bound.wipe()
             }
         } finally {
             Cf.release(publicKey)
         }
     }
 
-    private fun seDecrypt(key: SecKeyRef, encrypted: ByteArray): ByteArray {
+    private fun seDecrypt(key: SecKeyRef, encrypted: ByteArray, aad: ByteArray): ByteArray {
         val data = Cf.cfData(encrypted)
         try {
             val error = Cf.outPtr()
@@ -186,8 +208,27 @@ class MacOSBackend : HardwareKeyBackend {
                 data,
                 error
             ) ?: throw AesGcmAuthenticationException("Secure Enclave decryption failed (CFError ${Cf.cfErrorCode(error)})")
-            try {
-                return Cf.dataToBytes(decrypted)
+            return try {
+                val plaintext = Cf.dataToBytes(decrypted)
+                if (aad.isNotEmpty()) {
+                    try {
+                        require(plaintext.size >= 4) { "Decrypted data too short for AAD" }
+                        val aadLen = ((plaintext[0].toInt() and 0xFF) shl 24) or
+                            ((plaintext[1].toInt() and 0xFF) shl 16) or
+                            ((plaintext[2].toInt() and 0xFF) shl 8) or
+                            (plaintext[3].toInt() and 0xFF)
+                        require(plaintext.size >= 4 + aadLen) { "Truncated AAD" }
+                        val storedAad = plaintext.copyOfRange(4, 4 + aadLen)
+                        if (!storedAad.contentEquals(aad)) {
+                            throw AesGcmAuthenticationException("Hardware AAD mismatch")
+                        }
+                        plaintext.copyOfRange(4 + aadLen, plaintext.size)
+                    } finally {
+                        plaintext.fill(0)
+                    }
+                } else {
+                    plaintext
+                }
             } finally {
                 Cf.release(decrypted)
             }
@@ -273,10 +314,15 @@ class MacOSBackend : HardwareKeyBackend {
                 val data = Cf.cfData(key)
                 Cf.dictAdd(query, SecurityFramework.K_SEC_VALUE_DATA, data)
                 Cf.release(data)
-                // Protection: the kSecAttrAccessible* CFString constant itself.
+                // Protection: kSecAttrAccessible is the dictionary KEY; the
+                // kSecAttrAccessibleWhenUnlockedThisDeviceOnly constant is its VALUE.
+                // (Using the value constant as the key made SecItemAdd ignore the
+                // pair, leaving the item at the default accessibility — which is
+                // included in iCloud Keychain backups and restorable on other
+                // devices, defeating the device-binding property.)
                 Cf.dictAdd(
                     query,
-                    SecurityFramework.K_SEC_ATTR_ACCESSIBLE_WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+                    SecurityFramework.K_SEC_ATTR_ACCESSIBLE,
                     SecurityFramework.K_SEC_ATTR_ACCESSIBLE_WHEN_UNLOCKED_THIS_DEVICE_ONLY
                 )
                 val status = sec.SecItemAdd(query, null)

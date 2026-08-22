@@ -10,6 +10,7 @@ import app.cash.sqldelight.db.SqlSchema
 import com.sun.jna.Memory
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.PointerByReference
+import com.ultrabytecoder.kryptakeep.security.wipe
 import java.nio.charset.StandardCharsets
 
 /**
@@ -17,6 +18,12 @@ import java.nio.charset.StandardCharsets
  * ("file is not a database" on an existing encrypted file).
  */
 class WrongPassphraseException(message: String) : Exception(message)
+
+/**
+ * Thrown when the database file exists but is not a valid SQLCipher database
+ * (corruption, not a wrong key).
+ */
+class DatabaseCorruptException(message: String) : Exception(message)
 
 /**
  * Synchronous SQLDelight [SqlDriver] over the bundled SQLCipher C library.
@@ -55,7 +62,7 @@ class NativeSqlCipherDriver(
         try {
             db = openAndKey(dbPath, keyCopy)
         } finally {
-            keyCopy.fill(0)
+            keyCopy.wipe()
         }
 
         exec("PRAGMA journal_mode = WAL")
@@ -84,12 +91,37 @@ class NativeSqlCipherDriver(
         }
         val dbHandle = dbRef.value
 
-        val keyMem = Memory(key.size.toLong()).apply { write(0, key, 0, key.size) }
-        val keyRc = sqlite.sqlite3_key_v2(dbHandle, null, keyMem, key.size)
-        if (keyRc != SqlCipherNative.SQLITE_OK) {
-            val message = sqlite.sqlite3_errmsg(dbHandle)
+        // Pin the cipher parameters BEFORE sqlite3_key_v2: the KDF iteration count,
+        // KDF algorithm, HMAC algorithm, and HMAC flag all affect key derivation,
+        // which happens inside sqlite3_key_v2, so they must be set first to take
+        // effect. Use the current-database PRAGMA names (cipher_use_hmac /
+        // cipher_kdf_iter / cipher_kdf_algorithm / cipher_hmac_algorithm) — the
+        // *_default_* variants only set process-wide defaults for FUTURE opens and
+        // have no effect on this already-open handle. (SQLCipher 4 defaults match
+        // these values; setting them explicitly is audit-friendly and future-proof
+        // against SQLCipher 5 default changes.)
+        try {
+            execOnHandle(dbHandle, "PRAGMA cipher_use_hmac = 1;")
+            execOnHandle(dbHandle, "PRAGMA cipher_page_size = 4096;")
+            execOnHandle(dbHandle, "PRAGMA cipher_kdf_iter = 256000;")
+            execOnHandle(dbHandle, "PRAGMA cipher_kdf_algorithm = 2;")   // PBKDF2_HMAC_SHA512
+            execOnHandle(dbHandle, "PRAGMA cipher_hmac_algorithm = 2;")  // HMAC_SHA512
+        } catch (e: Exception) {
+            // A PRAGMA failure must not leak the database handle.
             sqlite.sqlite3_close_v2(dbHandle)
-            throw IllegalStateException("SQLCipher key rejected: $message")
+            throw e
+        }
+
+        val keyMem = Memory(key.size.toLong()).apply { write(0, key, 0, key.size) }
+        try {
+            val keyRc = sqlite.sqlite3_key_v2(dbHandle, null, keyMem, key.size)
+            if (keyRc != SqlCipherNative.SQLITE_OK) {
+                val message = sqlite.sqlite3_errmsg(dbHandle)
+                sqlite.sqlite3_close_v2(dbHandle)
+                throw IllegalStateException("SQLCipher key rejected: $message")
+            }
+        } finally {
+            keyMem.clear()
         }
 
         // Verify the key now: on an existing file a wrong key makes every read
@@ -103,13 +135,31 @@ class NativeSqlCipherDriver(
             errRef
         )
         if (verifyRc != SqlCipherNative.SQLITE_OK) {
+            val errCode = sqlite.sqlite3_errcode(dbHandle)
             val message = errRef.value?.getString(0, StandardCharsets.UTF_8.name())
                 ?: sqlite.sqlite3_errmsg(dbHandle)
             errRef.value?.let { sqlite.sqlite3_free(it) }
             sqlite.sqlite3_close_v2(dbHandle)
-            throw WrongPassphraseException(message)
+            if (errCode == SqlCipherNative.SQLITE_NOTADB) {
+                throw WrongPassphraseException(message)
+            }
+            throw DatabaseCorruptException("Database corruption (code $errCode): $message")
         }
         return dbHandle
+    }
+
+    private fun execOnHandle(handle: Pointer, sql: String) {
+        val errRef = PointerByReference()
+        val rc = sqlite.sqlite3_exec(handle, sql, null, null, errRef)
+        if (rc != SqlCipherNative.SQLITE_OK) {
+            val message = errRef.value?.getString(0, StandardCharsets.UTF_8.name())
+                ?: sqlite.sqlite3_errmsg(handle)
+            errRef.value?.let { sqlite.sqlite3_free(it) }
+            // A failed PRAGMA (e.g. typo, unsupported parameter) must not be
+            // silently ignored — the database would proceed with default cipher
+            // parameters, potentially corrupting it or failing to open it.
+            throw IllegalStateException("SQLCipher PRAGMA failed: $message ($sql)")
+        }
     }
 
     override fun <R> executeQuery(
@@ -122,10 +172,15 @@ class NativeSqlCipherDriver(
         ensureOpen()
         val stmtRef = prepare(sql)
         val stmt = stmtRef.value
+        var ps: NativePreparedStatement? = null
         try {
-            if (binders != null) NativePreparedStatement(stmt, sqlite).binders()
-            mapper(NativeSqliteCursor(stmt, sqlite))
+            if (binders != null) {
+                ps = NativePreparedStatement(stmt, sqlite)
+                ps.binders()
+            }
+            mapper(NativeSqliteCursor(stmt, sqlite, db))
         } finally {
+            ps?.clearRetained()
             sqlite.sqlite3_finalize(stmt)
         }
     }
@@ -139,11 +194,16 @@ class NativeSqlCipherDriver(
         ensureOpen()
         val stmtRef = prepare(sql)
         val stmt = stmtRef.value
+        var ps: NativePreparedStatement? = null
         try {
-            if (binders != null) NativePreparedStatement(stmt, sqlite).binders()
+            if (binders != null) {
+                ps = NativePreparedStatement(stmt, sqlite)
+                ps.binders()
+            }
             stepToDone(stmt)
             QueryResult.Value(sqlite.sqlite3_changes64(db))
         } finally {
+            ps?.clearRetained()
             sqlite.sqlite3_finalize(stmt)
         }
     }
@@ -265,6 +325,12 @@ private class NativePreparedStatement(
 
     private val retained = mutableListOf<Memory>()
 
+    /** Zeroes and releases every JNA [Memory] backing a bound BLOB/TEXT parameter. */
+    fun clearRetained() {
+        retained.forEach { it.clear() }
+        retained.clear()
+    }
+
     override fun bindBytes(index: Int, bytes: ByteArray?) {
         if (bytes == null) {
             bindNull(index)
@@ -326,6 +392,7 @@ private class NativePreparedStatement(
 private class NativeSqliteCursor(
     private val stmt: Pointer,
     private val sqlite: Sqlite3,
+    private val db: Pointer,
 ) : SqlCursor {
 
     private var onRow = false
@@ -335,7 +402,7 @@ private class NativeSqliteCursor(
         onRow = when (rc) {
             SqlCipherNative.SQLITE_ROW -> true
             SqlCipherNative.SQLITE_DONE -> false
-            else -> throw IllegalStateException("SQL query failed: ${sqlite.sqlite3_errmsg(stmt)}")
+            else -> throw IllegalStateException("SQL query failed: ${sqlite.sqlite3_errmsg(db)}")
         }
         return QueryResult.Value(onRow)
     }

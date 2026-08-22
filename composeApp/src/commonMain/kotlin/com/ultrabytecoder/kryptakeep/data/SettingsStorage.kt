@@ -1,9 +1,20 @@
 package com.ultrabytecoder.kryptakeep.data
 
-expect class SettingsStorage(context: Any? = null) {
+/**
+ * Key/value settings contract. [SettingsStorage] is the platform-backed
+ * implementation; tests use an in-memory fake of this interface so they never
+ * touch the real on-disk store (see KeyManagerTest).
+ */
+interface SettingsStore {
     fun putString(key: String, value: String)
     fun getString(key: String): String?
     fun remove(key: String)
+}
+
+expect class SettingsStorage(context: Any? = null) : SettingsStore {
+    override fun putString(key: String, value: String)
+    override fun getString(key: String): String?
+    override fun remove(key: String)
 }
 
 /**

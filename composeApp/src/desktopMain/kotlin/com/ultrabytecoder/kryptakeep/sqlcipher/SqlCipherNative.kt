@@ -6,6 +6,9 @@ import com.sun.jna.Pointer
 import com.sun.jna.ptr.PointerByReference
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.Locale
 
 /**
@@ -25,6 +28,7 @@ interface Sqlite3 : Library {
     fun sqlite3_close_v2(db: Pointer): Int
     fun sqlite3_exec(db: Pointer, sql: String?, callback: Pointer?, arg: Pointer?, errmsg: PointerByReference?): Int
     fun sqlite3_errmsg(db: Pointer): String
+    fun sqlite3_errcode(db: Pointer): Int
 
     fun sqlite3_prepare_v2(db: Pointer, zSql: String?, nByte: Int, ppStmt: PointerByReference, pzTail: Pointer?): Int
     fun sqlite3_db_handle(stmt: Pointer): Pointer
@@ -56,6 +60,7 @@ object SqlCipherNative {
     const val SQLITE_ROW = 100
     const val SQLITE_DONE = 101
     const val SQLITE_NULL = 5
+    const val SQLITE_NOTADB = 26
     const val SQLITE_OPEN_READWRITE = 0x00000002
     const val SQLITE_OPEN_CREATE = 0x00000004
     const val SQLITE_OPEN_NOMUTEX = 0x00008000
@@ -86,13 +91,40 @@ object SqlCipherNative {
     private fun extractToTemp(resourcePath: String): File {
         val stream = SqlCipherNative::class.java.getResourceAsStream(resourcePath)
             ?: throw IllegalStateException("Missing bundled SQLCipher native library: $resourcePath")
-
-        val fileName = resourcePath.substringAfterLast('/')
-        val temp = File.createTempFile("libsqlcipher", fileName.substringAfter("libsqlcipher"))
-        temp.deleteOnExit()
-        stream.use { input ->
-            FileOutputStream(temp).use { output -> input.copyTo(output) }
+        val bytes = stream.use { it.readBytes() }
+        val expectedHash = HASHES[resourcePath]
+            ?: throw IllegalStateException("No pinned hash for $resourcePath")
+        val actualHash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        if (!actualHash.contentEquals(expectedHash)) {
+            throw IllegalStateException("SQLCipher native library hash mismatch for $resourcePath")
         }
+        val fileName = resourcePath.substringAfterLast('/')
+        // Create the temp file with owner-only permissions BEFORE writing the
+        // library bytes, so there is no window where the file is world-readable
+        // (or replaceable by another local user) between creation and Native.load.
+        val temp = try {
+            Files.createTempFile(
+                "libsqlcipher",
+                fileName.substringAfter("libsqlcipher"),
+                PosixFilePermissions.asFileAttribute(
+                    setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+                )
+            ).toFile()
+        } catch (_: UnsupportedOperationException) {
+            // Non-POSIX filesystem (Windows): fall back to the default temp file.
+            File.createTempFile("libsqlcipher", fileName.substringAfter("libsqlcipher"))
+        }
+        temp.deleteOnExit()
+        FileOutputStream(temp).use { it.write(bytes) }
         return temp
     }
+
+    // Pinned SHA-256 of each bundled native library (compute: shasum -a 256 <file>).
+    private val HASHES: Map<String, ByteArray> = mapOf(
+        "/native/linux-x86_64/libsqlcipher.so" to hexToBytes("c472aa49ca70181cb7d53876b0953fa7a610c8fa3f6676693f7c3501ecd273fd"),
+        "/native/windows-x86_64/libsqlcipher.dll" to hexToBytes("3ec27ce31ac779f943c3b377aef88459feafdcf216eec57042cfe9cf75d4be16")
+    )
+
+    private fun hexToBytes(hex: String): ByteArray =
+        hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 }

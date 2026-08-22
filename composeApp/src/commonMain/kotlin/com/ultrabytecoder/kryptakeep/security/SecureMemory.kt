@@ -24,5 +24,10 @@ expect fun CharArray.wipe()
  *
  * - Android/JVM: `System.gc()` (a hint; ART may ignore it).
  * - iOS: `kotlin.native.runtime.GC.collect()` (forces a collection pass).
+ *
+ * SECURITY NOTE: [gcHint] is NOT a security control. It cannot guarantee
+ * that immutable Strings or other unreachable secret material is reclaimed
+ * before a memory-dump attacker reads it. The only reliable mitigation is
+ * to avoid materializing secrets as immutable types.
  */
 expect fun gcHint()

@@ -107,9 +107,11 @@ actual object HardwareKeyStore {
         if (status == errSecSuccess) result.value as SecKeyRef? else null
     }
 
-    private fun getOrCreateKey(): SecKeyRef? {
-        findKey()?.let { return it }
-        return memScoped {
+    private val keyLock = Any()
+
+    private fun getOrCreateKey(): SecKeyRef? = synchronized(keyLock) {
+        findKey()?.let { return@synchronized it }
+        memScoped {
             val error = alloc<CFErrorRefVar>()
             val attrs = keyAttributes()
             val key = SecKeyCreateRandomKey(attrs, error.ptr)
@@ -117,21 +119,32 @@ actual object HardwareKeyStore {
             if (key == null) {
                 // Release the CFErrorRef so a failed creation does not leak (NEW-13).
                 error.value?.let { CFRelease(it) }
+                return@synchronized findKey()
             }
             key
         }
     }
 
-    actual fun encrypt(plaintext: ByteArray): ByteArray {
+    actual fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
         val key = getOrCreateKey()
             ?: throw IllegalStateException("Failed to create Secure Enclave key")
         var publicKey: SecKeyRef? = null
         return try {
             publicKey = SecKeyCopyPublicKey(key)
                 ?: throw IllegalStateException("Failed to export Secure Enclave public key")
+            val bound = if (aad.isNotEmpty()) {
+                ByteArray(4 + aad.size + plaintext.size).also { out ->
+                    out[0] = (aad.size shr 24).toByte()
+                    out[1] = (aad.size shr 16).toByte()
+                    out[2] = (aad.size shr 8).toByte()
+                    out[3] = aad.size.toByte()
+                    aad.copyInto(out, 4)
+                    plaintext.copyInto(out, 4 + aad.size)
+                }
+            } else plaintext
             memScoped {
                 val error = alloc<CFErrorRefVar>()
-                val plaintextData = CFDataCreate(kCFAllocatorDefault, plaintext.refTo(0), plaintext.size.toLong())
+                val plaintextData = CFDataCreate(kCFAllocatorDefault, bound.refTo(0), bound.size.toLong())
                 val encryptedData = SecKeyCreateEncryptedData(
                     publicKey!!,
                     kSecKeyAlgorithmECIESEncryptionCofactorVariableIVX963SHA256AESGCM,
@@ -155,12 +168,12 @@ actual object HardwareKeyStore {
         }
     }
 
-    actual fun decrypt(encrypted: ByteArray): ByteArray {
+    actual fun decrypt(encrypted: ByteArray, aad: ByteArray): ByteArray {
         val key = findKey()
             ?: throw HardwareKeyInvalidatedException("Secure Enclave key missing")
 
         return try {
-            memScoped {
+            val plaintext = memScoped {
                 val error = alloc<CFErrorRefVar>()
                 val ciphertextData = CFDataCreate(kCFAllocatorDefault, encrypted.refTo(0), encrypted.size.toLong())
                 val plaintextData = SecKeyCreateDecryptedData(
@@ -178,6 +191,25 @@ actual object HardwareKeyStore {
                 val result = CFDataGetBytePtr(plaintextData)!!.readBytes(length)
                 CFRelease(plaintextData)
                 result
+            }
+            if (aad.isNotEmpty()) {
+                try {
+                    require(plaintext.size >= 4) { "Decrypted data too short for AAD" }
+                    val aadLen = ((plaintext[0].toInt() and 0xFF) shl 24) or
+                        ((plaintext[1].toInt() and 0xFF) shl 16) or
+                        ((plaintext[2].toInt() and 0xFF) shl 8) or
+                        (plaintext[3].toInt() and 0xFF)
+                    require(plaintext.size >= 4 + aadLen) { "Truncated AAD" }
+                    val storedAad = plaintext.copyOfRange(4, 4 + aadLen)
+                    if (!storedAad.contentEquals(aad)) {
+                        throw AesGcmAuthenticationException("Hardware AAD mismatch")
+                    }
+                    plaintext.copyOfRange(4 + aadLen, plaintext.size)
+                } finally {
+                    plaintext.fill(0)
+                }
+            } else {
+                plaintext
             }
         } finally {
             // +1 reference from SecItemCopyMatching in findKey() (NEW-8).
@@ -201,5 +233,13 @@ actual object HardwareKeyStore {
             SecItemDelete(query)
             CFRelease(query)
         }
+    }
+
+    actual fun purgeCache() {
+        // The Secure Enclave key is non-exportable and never cached — nothing to purge.
+    }
+
+    actual fun configureInstallId(id: ByteArray) {
+        // The Secure Enclave key is already device-bound — no install-id binding needed.
     }
 }

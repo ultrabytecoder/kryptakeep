@@ -1,7 +1,8 @@
 package com.ultrabytecoder.kryptakeep.security
 
-import com.ultrabytecoder.kryptakeep.data.SettingsStorage
+import com.ultrabytecoder.kryptakeep.data.SettingsStore
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
+import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import kotlin.io.encoding.Base64
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -9,32 +10,54 @@ import org.kotlincrypto.random.CryptoRand
 
 /**
  * Single atomic key-material envelope: wrapped DEK + hardware-wrapped salt +
- * iterations, serialized to one JSON blob and written with a single
+ * KDF parameters, serialized to one JSON blob and written with a single
  * [SettingsStorage.putString] call (commit()-backed), so a crash between writes
  * can never leave partial key material.
+ *
+ * Version 2 records the KDF algorithm and its parameters explicitly:
+ *  - All platforms: Argon2id (`kdfAlgorithm = "ARGON2ID"`), `iterations` is the
+ *    Argon2 time cost (passes), plus `memoryKib`/`parallelism`.
+ *  - PBKDF2-HMAC-SHA256 (`kdfAlgorithm = "PBKDF2-SHA256"`) is used only as a
+ *    runtime fallback when Argon2id is unavailable (legacy iOS envelopes, or a
+ *    transient libsodium failure); `iterations` is the PBKDF2 iteration count.
  */
 @Serializable
 private data class WrappedDekEnvelope(
     val version: Int,
     val salt: String,
     val wrapped: String,
-    val iterations: Int
+    val iterations: Int,
+    val kdfAlgorithm: String,
+    val memoryKib: Int = 32768,
+    val parallelism: Int = 1
 )
 
-/** Parsed envelope plus whether it came from the legacy 3-key format. */
+/**
+ * Thrown when a stored DEK envelope exists but cannot be parsed (truncated JSON,
+ * unknown version, malformed fields). Distinct from "no envelope" so the caller can
+ * route to the recovery flow instead of the fresh-setup flow (which would otherwise
+ * let the user create a new wallet and lose access to the old one).
+ */
+class EnvelopeCorruptionException(message: String) : Exception(message)
+
+/** Parsed DEK envelope. */
 private data class EnvelopeData(
     val salt: String,
     val wrapped: String,
     val iterations: Int,
-    val fromLegacy: Boolean
+    val kdfAlgorithm: String,
+    val memoryKib: Int,
+    val parallelism: Int
 )
 
 /**
  * Manages the database encryption key hierarchy (Envelope Encryption):
  *
  *  - [DEK] (Data Encryption Key, 32 random bytes) encrypts the SQLCipher database.
- *  - [KEK] (Key Encryption Key) = PBKDF2(PIN, salt, 600k) wraps the DEK at rest.
- *  - The PBKDF2 **salt** is wrapped by the always-on device hardware key
+ *  - [KEK] (Key Encryption Key) = KDF(credential, salt, params) wraps the DEK at rest:
+ *    Argon2id on all platforms (BouncyCastle on JVM, libsodium on iOS) with a
+ *    PBKDF2-HMAC-SHA256 runtime fallback ([Kdf], [PinConfig]).
+ *  - The KDF **salt** is wrapped by the always-on device hardware key
  *    ([HardwareKeyStore], Android Keystore / iOS Secure Enclave, no biometric prompt),
  *    so deriving the KEK requires the device: offline PIN brute-force is impossible
  *    and app data is unusable on another device.
@@ -49,34 +72,53 @@ private data class EnvelopeData(
  * authentication error — the unwrap itself is the PIN verification.
  */
 class KeyManager(
-    private val settingsStorage: SettingsStorage
+    private val settingsStorage: SettingsStore
 ) {
 
     private companion object {
         const val KEY_WRAPPED_DEK = "dek_envelope"
-        // Legacy keys (pre-envelope installs): kept for read fallback only.
-        const val KEY_LEGACY_WRAPPED = "dek_wrapped_pin"
-        const val KEY_LEGACY_SALT = "dek_pin_salt"
-        const val KEY_LEGACY_ITERATIONS = "dek_pin_iterations"
         const val KEY_INSTALL_ID = "dek_install_id"
-        const val WRAP_VERSION = 1
+        const val WRAP_VERSION = 2
         const val DEK_SIZE = 32
         const val INSTALL_ID_SIZE = 16
+        const val KDF_ARGON2ID = "ARGON2ID"
+        const val KDF_PBKDF2_SHA256 = "PBKDF2-SHA256"
     }
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** True when PIN key material (wrapped DEK + salt envelope) exists. */
-    fun hasPinKeyMaterial(): Boolean = loadEnvelope() != null
+    init {
+        // Bind the device key to this install (F-11, Windows DPAPI entropy).
+        // Must run before the first HardwareKeyStore encrypt/decrypt.
+        val id = installIdBytes()
+        try {
+            HardwareKeyStore.configureInstallId(id)
+        } finally {
+            id.wipe()
+        }
+    }
+
+    /**
+     * True when a parseable PIN key-material envelope exists. A corrupted envelope
+     * is treated as "no material" here (the startup flow then shows the setup
+     * screen, where the user is routed to recovery); the corruption itself is
+     * surfaced with a distinct error when the user actually tries to verify a PIN
+     * (see [unwrapDekWithPin]).
+     */
+    fun hasPinKeyMaterial(): Boolean = try {
+        loadEnvelope() != null
+    } catch (e: EnvelopeCorruptionException) {
+        false
+    }
 
     /**
      * Generates a brand-new DEK and wraps it with [pin] (fresh setup / recovery).
      * Caller owns the returned array.
      */
-    fun generateAndWrapDek(pin: CharArray): ByteArray {
+    fun generateAndWrapDek(pin: CharArray, method: SecurityMethod): ByteArray {
         val dek = CryptoRand.Default.nextBytes(ByteArray(DEK_SIZE))
         try {
-            wrapDekWithPin(pin, dek)
+            wrapDekWithPin(pin, dek, method)
         } catch (e: Exception) {
             dek.wipe()
             throw e
@@ -89,14 +131,19 @@ class KeyManager(
      * Returns null when the PIN is wrong or the key material is missing/corrupt —
      * never throws for an authentication failure.
      *
-     * Legacy installs (pre-envelope, unbound by AAD) are unwrapped transparently and
-     * re-wrapped into the AAD-bound envelope on success (best-effort migration).
-     *
      * @throws HardwareKeyInvalidatedException when the device hardware key is
      * missing/invalidated — the caller must route to recovery (PIN re-setup).
      */
-    fun unwrapDekWithPin(pin: CharArray): ByteArray? {
-        val envelope = loadEnvelope() ?: return null
+    fun unwrapDekWithPin(pin: CharArray, method: SecurityMethod): ByteArray? {
+        val envelope = try {
+            loadEnvelope()
+        } catch (e: EnvelopeCorruptionException) {
+            // A stored envelope exists but is unparseable — the DEK is unrecoverable
+            // without a fresh setup. Surface as hardware-invalidated so the UI routes
+            // to recovery rather than misreporting "wrong PIN" or silently re-wrapping
+            // over the (now unreadable) old key material.
+            throw HardwareKeyInvalidatedException("DEK envelope is corrupted: ${e.message}")
+        } ?: return null
 
         val wrapped = try {
             Base64.Default.decode(envelope.wrapped)
@@ -125,24 +172,19 @@ class KeyManager(
                 throw HardwareKeyInvalidatedException("Hardware key unavailable: ${e.message}")
             }
             pinBytes = pin.toPinBytes()
-            kek = Pbkdf2.derive(
-                password = pinBytes,
-                salt = salt,
-                iterations = envelope.iterations,
-                derivedKeyLengthBytes = DEK_SIZE
-            )
-            val aad = if (envelope.fromLegacy) ByteArray(0) else wrapAad()
-            dek = AesGcm.decrypt(kek, wrapped, aad)
-            if (envelope.fromLegacy) {
-                // Best-effort migration to the AAD-bound envelope; legacy stays on failure.
-                try {
-                    wrapDekWithPin(pin, dek)
-                } catch (_: Exception) {
-                }
-            }
+            // The stored KDF parameters win: they are the values the DEK was wrapped
+            // with, so re-deriving with different parameters would always fail GCM.
+            kek = deriveKek(pinBytes, salt, envelope)
+            dek = AesGcm.decrypt(kek, wrapped, wrapAad())
             dek
         } catch (e: AesGcmAuthenticationException) {
             null
+        } catch (e: KdfException) {
+            // Argon2id backend failed at runtime (e.g. memory allocation failure
+            // under pressure). The DEK is unrecoverable on this device right now —
+            // surface as hardware-invalidated so the UI routes to recovery rather
+            // than crashing or misreporting "wrong PIN".
+            throw HardwareKeyInvalidatedException("Key derivation failed: ${e.message}")
         } finally {
             wrapped.wipe()
             saltBlob.wipe()
@@ -155,12 +197,12 @@ class KeyManager(
     /**
      * Re-wraps an already-unwrapped [dek] with [newPin] (PIN change). The caller
      * has already verified the old PIN by unwrapping [dek] itself, so this skips
-     * the second PBKDF2 derivation (NEW-12). Returns false when the wrap fails.
+     * the second KDF derivation (NEW-12). Returns false when the wrap fails.
      * The caller keeps ownership of [dek] and must wipe it when done.
      */
-    fun rewrapDekWithDek(dek: ByteArray, newPin: CharArray): Boolean {
+    fun rewrapDekWithDek(dek: ByteArray, newPin: CharArray, newMethod: SecurityMethod): Boolean {
         return try {
-            wrapDekWithPin(newPin, dek)
+            wrapDekWithPin(newPin, dek, newMethod)
             true
         } catch (e: Exception) {
             false
@@ -170,9 +212,6 @@ class KeyManager(
     /** Wipes all key material (recovery / reset). */
     fun deleteAll() {
         settingsStorage.remove(KEY_WRAPPED_DEK)
-        settingsStorage.remove(KEY_LEGACY_WRAPPED)
-        settingsStorage.remove(KEY_LEGACY_SALT)
-        settingsStorage.remove(KEY_LEGACY_ITERATIONS)
         // Remove the device hardware key too: the salt/DEK envelopes it protected
         // are gone, and a fresh key is created lazily on the next setup (iOS
         // Keychain items otherwise persist across app reinstalls).
@@ -182,7 +221,12 @@ class KeyManager(
         }
     }
 
-    private fun wrapDekWithPin(pin: CharArray, dek: ByteArray) {
+    private fun timeCostFor(method: SecurityMethod): Int = when (method) {
+        SecurityMethod.PIN -> PinConfig.KDF_TIME_COST_PIN
+        SecurityMethod.PASSWORD -> PinConfig.KDF_TIME_COST_PASSWORD
+    }
+
+    private fun wrapDekWithPin(pin: CharArray, dek: ByteArray, method: SecurityMethod) {
         var pinBytes: ByteArray? = null
         var kek: ByteArray? = null
         var wrapped: ByteArray? = null
@@ -193,27 +237,67 @@ class KeyManager(
             // Wrap the salt with the device hardware key BEFORE storing anything:
             // a failure here aborts setup without leaving partial key material.
             hwSaltBlob = HardwareKeyStore.encrypt(salt)
+            val timeCost = timeCostFor(method)
             pinBytes = pin.toPinBytes()
-            kek = Pbkdf2.derive(
-                password = pinBytes,
-                salt = salt,
-                iterations = PinConfig.PBKDF2_ITERATIONS,
-                derivedKeyLengthBytes = DEK_SIZE
-            )
+            // Prefer Argon2id; if the platform's Argon2id backend fails at
+            // runtime (e.g. libsodium memory allocation failure under pressure),
+            // degrade to PBKDF2 for this envelope. The algorithm is recorded
+            // honestly in the envelope so unwrap uses the matching path.
+            val (algorithm, iterations) = if (Kdf.supportsArgon2id) {
+                try {
+                    kek = Kdf.derive(
+                        password = pinBytes,
+                        salt = salt,
+                        timeCost = timeCost,
+                        derivedKeyLengthBytes = DEK_SIZE,
+                        memoryKib = PinConfig.KDF_MEMORY_KIB,
+                        parallelism = PinConfig.KDF_PARALLELISM
+                    )
+                    KDF_ARGON2ID to timeCost
+                } catch (e: KdfException) {
+                    // Argon2id failed at runtime — degrade to PBKDF2 for this
+                    // envelope. The algorithm is recorded honestly in the envelope so
+                    // unwrap uses the matching path.
+                    kek = Pbkdf2.derive(
+                        password = pinBytes,
+                        salt = salt,
+                        iterations = PinConfig.PBKDF2_FALLBACK_ITERATIONS,
+                        derivedKeyLengthBytes = DEK_SIZE,
+                        algorithm = Pbkdf2Algorithm.SHA256
+                    )
+                    KDF_PBKDF2_SHA256 to PinConfig.PBKDF2_FALLBACK_ITERATIONS
+                }
+            } else {
+                kek = Pbkdf2.derive(
+                    password = pinBytes,
+                    salt = salt,
+                    iterations = PinConfig.PBKDF2_FALLBACK_ITERATIONS,
+                    derivedKeyLengthBytes = DEK_SIZE,
+                    algorithm = Pbkdf2Algorithm.SHA256
+                )
+                KDF_PBKDF2_SHA256 to PinConfig.PBKDF2_FALLBACK_ITERATIONS
+            }
             wrapped = AesGcm.encrypt(kek, dek, wrapAad())
+            // Record Argon2 memory/parallelism only for Argon2id envelopes; a
+            // PBKDF2 envelope has no such parameters (deriveKek ignores them,
+            // but storing 0 keeps the envelope self-describing).
+            val (memKib, par) = if (algorithm == KDF_ARGON2ID) {
+                PinConfig.KDF_MEMORY_KIB to PinConfig.KDF_PARALLELISM
+            } else {
+                0 to 0
+            }
             val envelope = WrappedDekEnvelope(
                 version = WRAP_VERSION,
                 salt = Base64.Default.encode(hwSaltBlob),
                 wrapped = Base64.Default.encode(wrapped),
-                iterations = PinConfig.PBKDF2_ITERATIONS
+                iterations = iterations,
+                kdfAlgorithm = algorithm,
+                memoryKib = memKib,
+                parallelism = par
             )
             // Single atomic write (commit()-backed) — a crash here leaves either
             // the old envelope or the new one, never a partial mix.
             settingsStorage.putString(KEY_WRAPPED_DEK, json.encodeToString(envelope))
-            // Legacy keys are removed only after the envelope write succeeded.
-            settingsStorage.remove(KEY_LEGACY_WRAPPED)
-            settingsStorage.remove(KEY_LEGACY_SALT)
-            settingsStorage.remove(KEY_LEGACY_ITERATIONS)
         } finally {
             pinBytes?.wipe()
             kek?.wipe()
@@ -223,26 +307,88 @@ class KeyManager(
         }
     }
 
-    /** Reads the envelope, falling back to the legacy 3-key format (version 0). */
-    private fun loadEnvelope(): EnvelopeData? {
-        val stored = settingsStorage.getString(KEY_WRAPPED_DEK)
-        if (stored != null) {
-            return try {
-                val envelope = json.decodeFromString<WrappedDekEnvelope>(stored)
-                if (envelope.version != WRAP_VERSION) null
-                else EnvelopeData(envelope.salt, envelope.wrapped, envelope.iterations, fromLegacy = false)
-            } catch (_: Exception) {
-                null
+    /**
+     * Derives the KEK with the KDF recorded in [envelope]. The dispatch is on the
+     * envelope's recorded algorithm, not the platform capability, so an envelope
+     * created on any platform unwraps on any platform that can run that KDF.
+     *
+     * @throws HardwareKeyInvalidatedException when the envelope's KDF cannot run
+     * on this platform (e.g. an Argon2id envelope on a device where libsodium
+     * failed to initialize) — the DEK is unrecoverable here and the caller must
+     * route to recovery.
+     */
+    private fun deriveKek(pinBytes: ByteArray, salt: ByteArray, envelope: EnvelopeData): ByteArray =
+        when (envelope.kdfAlgorithm) {
+            KDF_ARGON2ID -> {
+                if (!Kdf.supportsArgon2id) {
+                    throw HardwareKeyInvalidatedException(
+                        "Argon2id envelope but Argon2id unavailable on this platform"
+                    )
+                }
+                Kdf.derive(
+                    password = pinBytes,
+                    salt = salt,
+                    timeCost = envelope.iterations,
+                    derivedKeyLengthBytes = DEK_SIZE,
+                    memoryKib = envelope.memoryKib,
+                    parallelism = envelope.parallelism
+                )
             }
+
+            KDF_PBKDF2_SHA256 -> Pbkdf2.derive(
+                password = pinBytes,
+                salt = salt,
+                iterations = envelope.iterations,
+                derivedKeyLengthBytes = DEK_SIZE,
+                algorithm = Pbkdf2Algorithm.SHA256
+            )
+
+            else -> throw IllegalStateException("Unknown KDF algorithm: ${envelope.kdfAlgorithm}")
         }
-        val wrappedB64 = settingsStorage.getString(KEY_LEGACY_WRAPPED) ?: return null
-        val saltB64 = settingsStorage.getString(KEY_LEGACY_SALT) ?: return null
-        val iterations = settingsStorage.getString(KEY_LEGACY_ITERATIONS)?.toIntOrNull() ?: return null
-        return EnvelopeData(saltB64, wrappedB64, iterations, fromLegacy = true)
+
+    /**
+     * Reads the AAD-bound DEK envelope. Returns null when no envelope is stored.
+     *
+     * @throws EnvelopeCorruptionException when an envelope IS stored but cannot be
+     * parsed (truncated JSON, unknown version, malformed fields) — the caller must
+     * distinguish this from "missing" so it can route to recovery.
+     */
+    private fun loadEnvelope(): EnvelopeData? {
+        val stored = settingsStorage.getString(KEY_WRAPPED_DEK) ?: return null
+        val envelope = try {
+            json.decodeFromString<WrappedDekEnvelope>(stored)
+        } catch (e: Exception) {
+            throw EnvelopeCorruptionException("unparseable envelope: ${e.message}")
+        }
+        if (envelope.version != WRAP_VERSION) {
+            throw EnvelopeCorruptionException("unsupported envelope version ${envelope.version}")
+        }
+        // Validate the Base64 fields: malformed Base64 is corruption, not a wrong
+        // PIN. If we let Base64.decode throw IllegalArgumentException in
+        // unwrapDekWithPin, it would be caught and return null (wrong PIN),
+        // burning a PIN attempt instead of routing to recovery.
+        try {
+            Base64.Default.decode(envelope.wrapped)
+        } catch (e: IllegalArgumentException) {
+            throw EnvelopeCorruptionException("malformed Base64 in wrapped DEK")
+        }
+        try {
+            Base64.Default.decode(envelope.salt)
+        } catch (e: IllegalArgumentException) {
+            throw EnvelopeCorruptionException("malformed Base64 in salt")
+        }
+        return EnvelopeData(
+            salt = envelope.salt,
+            wrapped = envelope.wrapped,
+            iterations = envelope.iterations,
+            kdfAlgorithm = envelope.kdfAlgorithm,
+            memoryKib = envelope.memoryKib,
+            parallelism = envelope.parallelism
+        )
     }
 
     /** Stable per-install identifier generated on first use (not secret). */
-    private fun installIdBytes(): ByteArray {
+    internal fun installIdBytes(): ByteArray {
         val stored = settingsStorage.getString(KEY_INSTALL_ID)
         if (stored != null) {
             try {
@@ -257,5 +403,12 @@ class KeyManager(
     }
 
     /** AAD binding the DEK wrap to this install and the wrap algorithm version. */
-    private fun wrapAad(): ByteArray = installIdBytes() + byteArrayOf(WRAP_VERSION.toByte())
+    private fun wrapAad(): ByteArray {
+        val id = installIdBytes()
+        return try {
+            id + byteArrayOf(WRAP_VERSION.toByte())
+        } finally {
+            id.wipe()
+        }
+    }
 }
