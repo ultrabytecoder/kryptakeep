@@ -30,6 +30,10 @@ class KeyManagerTest {
     @BeforeTest
     fun setUp() {
         storage = InMemorySettingsStorage()
+        // HardwareKeyStore is a process-wide singleton; on the JVM target its
+        // in-memory fallback key would otherwise persist across tests and pollute
+        // a later test that assumes a fresh key. Reset it for isolation.
+        HardwareKeyStore.deleteKey()
     }
 
     @Test

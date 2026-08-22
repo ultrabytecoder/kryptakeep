@@ -19,7 +19,9 @@ plugins {
 kotlin {
     androidTarget {
         compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_11)
+            // Aligned with the desktop (jvm) target so the shared jvmMain source
+            // set compiles to a single, consistent bytecode level for both.
+            jvmTarget.set(JvmTarget.JVM_17)
             freeCompilerArgs.add("-Xexpect-actual-classes")
         }
     }
@@ -61,6 +63,20 @@ kotlin {
 
     sourceSets {
         val currentOs = org.gradle.internal.os.OperatingSystem.current()
+
+        // Shared JVM source set: actuals used by both the desktop (jvm) target
+        // and the Android target (app + local unit tests). Android local unit
+        // tests run on a plain JVM without the AndroidKeyStore provider, so the
+        // shared HardwareKeyStore actual must degrade gracefully there.
+        val jvmMain by creating { dependsOn(commonMain.get()) }
+        val jvmTest by creating { dependsOn(commonTest.get()) }
+
+        // desktopMain/desktopTest are wired below in their existing `by getting`
+        // dependency blocks (a second `by getting` for the same source set is a
+        // "Conflicting declarations" error). androidMain/androidUnitTest have no
+        // prior declaration, so they use `named(...)`.
+        named("androidMain") { dependsOn(jvmMain) }
+        named("androidUnitTest") { dependsOn(jvmTest) }
 
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
@@ -139,6 +155,7 @@ kotlin {
             else -> error("Unsupported OS for desktop target")
         }
         val desktopMain by getting {
+            dependsOn(jvmMain)
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation(libs.jna)
@@ -154,6 +171,7 @@ kotlin {
             implementation(libs.coroutines.test)
         }
         val desktopTest by getting {
+            dependsOn(jvmTest)
             dependencies {
                 implementation(libs.kotlin.test)
                 implementation(libs.junit)
@@ -230,8 +248,9 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        // Aligned with the Kotlin jvmTarget (JVM_17) for the shared jvmMain source set.
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 }
 

@@ -54,14 +54,21 @@ expect object HardwareKeyStore {
      * Wipes any in-process cache of the unwrapped device key (e.g. a Keychain or
      * DPAPI-unwrapped AES key held in the JVM heap). The on-disk / OS-store key is
      * NOT deleted — only the in-memory copy. Call on session lock.
+     *
+     * On the JVM target the in-memory fallback key IS this cache, so it is wiped
+     * here; the next [encrypt]/[decrypt] re-creates a fresh fallback key (old
+     * ciphertext then fails GCM authentication). On Android the key never leaves
+     * the Keystore, so this is a no-op.
      */
     fun purgeCache()
 
     /**
      * Binds the device key to the install ID (F-11). On Windows the DPAPI blob is
      * wrapped with entropy derived from [id], so a blob copied to another install
-     * (same user) cannot be unwrapped. No-op on platforms without such a binding.
-     * Must be called before the first [encrypt]/[decrypt].
+     * (same user) cannot be unwrapped. No-op on platforms without such a binding
+     * (Android Keystore is already device-bound; the JVM in-memory fallback has no
+     * OS store to bind — install-ID binding there is provided at the AES-GCM layer
+     * via the AAD). Must be called before the first [encrypt]/[decrypt].
      */
     fun configureInstallId(id: ByteArray)
 }

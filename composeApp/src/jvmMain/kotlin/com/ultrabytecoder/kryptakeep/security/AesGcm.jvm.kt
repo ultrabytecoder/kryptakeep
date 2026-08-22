@@ -27,6 +27,7 @@ actual object AesGcm {
             cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
             if (aad.isNotEmpty()) cipher.updateAAD(aad)
             ciphertext = cipher.doFinal(plaintext)
+            // Concatenation copies the bytes — safe to wipe iv/ciphertext below.
             result = iv + ciphertext
             result
         } finally {

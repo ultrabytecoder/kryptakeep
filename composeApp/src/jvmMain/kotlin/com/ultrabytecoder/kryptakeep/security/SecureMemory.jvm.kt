@@ -1,9 +1,10 @@
 package com.ultrabytecoder.kryptakeep.security
 
 /**
- * JVM zeroization: the volatile sink makes the zeroed contents observable to
- * other threads, so the JIT cannot prove the fill is dead and eliminate it
- * (dead-store elimination). Same pattern as the Android implementation.
+ * JVM/Android zeroization. Writing the array reference through a @Volatile sink
+ * forces the zeroed contents to be observable by other threads, so the JIT cannot
+ * prove the fill is dead and eliminate it (dead-store elimination).
+ * Best-effort by JMM definition, but the accepted practice on ART/HotSpot.
  */
 private @Volatile var byteArraySink: ByteArray? = null
 
@@ -24,6 +25,6 @@ actual fun CharArray.wipe() {
 }
 
 actual fun gcHint() {
-    // Best-effort hint on HotSpot; may be ignored.
+    // Best-effort hint on ART/HotSpot; may be ignored.
     System.gc()
 }
