@@ -90,7 +90,7 @@ internal class AndroidKeystoreProvider(lock: Any) : KeystoreProvider(lock) {
             // is the precise signal; the broad ProviderException check would also
             // swallow unrelated provider failures (keymaster OOM, attestation) and
             // mask them as a StrongBox fallback.
-            if (e !is StrongBoxUnavailableException) throw e
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && e !is StrongBoxUnavailableException) throw e
             try {
                 keyStore?.deleteEntry(KEY_ALIAS)
             } catch (_: Exception) {
