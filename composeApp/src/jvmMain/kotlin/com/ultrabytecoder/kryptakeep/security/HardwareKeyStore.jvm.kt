@@ -46,11 +46,14 @@ actual object HardwareKeyStore {
      * failed construction forever), so a transient failure does not permanently
      * disable the hardware key for the process.
      *
-     * Caller must hold [keyLock]; the provider is constructed with [keyLock] so
-     * its internal operations synchronize on the same monitor (no nested locks).
+     * Synchronized on [keyLock] so concurrent first-use cannot construct two
+     * providers (one would be orphaned). [keyLock] is reentrant, so this is safe
+     * to call from paths that already hold [keyLock] (e.g. [encrypt],
+     * [resolveKeyForDecrypt]). The provider is constructed with [keyLock] so its
+     * internal operations synchronize on the same monitor (no nested locks).
      */
-    private fun provider(): KeystoreProvider {
-        return providerHolder ?: createKeystoreProvider(keyLock).also { providerHolder = it }
+    private fun provider(): KeystoreProvider = synchronized(keyLock) {
+        providerHolder ?: createKeystoreProvider(keyLock).also { providerHolder = it }
     }
 
     /**
@@ -105,13 +108,16 @@ actual object HardwareKeyStore {
     }
 
     actual fun deleteKey() {
+        // Atomic: wipe the fallback key AND delete the hardware key under the
+        // same [keyLock] so a concurrent encrypt() cannot generate a fresh
+        // fallback key in the gap (which provider().deleteKey() would then
+        // orphan). Reentrant — provider()/provider().deleteKey() re-acquire the
+        // same [keyLock] without deadlocking.
         synchronized(keyLock) {
             fallbackKey?.wipe()
             fallbackKey = null
+            provider().deleteKey()
         }
-        // provider() re-resolves under the same [keyLock] (released above); the
-        // provider's deleteKey() re-acquires it — same monitor, no nesting.
-        provider().deleteKey()
     }
 
     actual fun purgeCache() {
