@@ -51,8 +51,8 @@ class TrxProviderCreateTransactionTest {
 
     private fun createProvider(createClient: () -> HttpClient = createMockFactory()): TrxProvider {
         val masterKey = DeterministicWallet.generate(Hex.decode(SEED_HEX))
-        val account = AccountInfo(ACCOUNT_ID, 1, "Test", "0", AccountType.Trx, "TRX", null, 0)
-        val destAccount = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Trx, "TRX", null, 1)
+        val account = AccountInfo(ACCOUNT_ID, 1, "Test", "0", AccountType.Trx, "TRX", null, 0, "m/44'/195'/0'/0/0")
+        val destAccount = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Trx, "TRX", null, 1, "m/44'/195'/1'/0/0")
         return TrxProvider(masterKey, FakeAccountRepository(mapOf(ACCOUNT_ID to account, DEST_ACCOUNT_ID to destAccount)), JsonObject(emptyMap()), NetworkConfig.testnet("test-api-key"), FakeTransactionRepository(), createClient)
     }
 
@@ -110,6 +110,22 @@ class TrxProviderCreateTransactionTest {
         assertFailsWith<IllegalStateException> {
             provider.createTransaction(destAddress, BigDecimal.fromLong(100), ACCOUNT_ID)
         }
+    }
+
+    @Test
+    fun createTransaction_rejectsCustomFeeParams() = runTest {
+        val provider = createProvider()
+        val destAddress = provider.getAddress(DEST_ACCOUNT_ID)
+
+        assertFailsWith<IllegalArgumentException> {
+            provider.createTransaction(destAddress, BigDecimal.fromLong(100), ACCOUNT_ID, com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams.Tron(35_000_000L))
+        }
+    }
+
+    @Test
+    fun feePresets_returnsNull() = runTest {
+        val provider = createProvider()
+        assertEquals(null, provider.feePresets(ACCOUNT_ID))
     }
 
     @Test

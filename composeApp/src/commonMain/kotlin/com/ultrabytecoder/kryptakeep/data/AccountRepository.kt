@@ -2,7 +2,6 @@ package com.ultrabytecoder.kryptakeep.data
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
-import com.ultrabytecoder.kryptakeep.db.KryptaKeepDatabase
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
 import com.ultrabytecoder.kryptakeep.domain.model.AccountType
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository as AccountRepositoryInterface
@@ -12,11 +11,25 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-class AccountRepository(database: KryptaKeepDatabase) : AccountRepositoryInterface {
-    private val queries = database.kryptaKeepDatabaseQueries
+class AccountRepository(private val databaseProvider: DatabaseProvider) : AccountRepositoryInterface {
+    private val queries get() = databaseProvider.database().kryptaKeepDatabaseQueries
 
     override fun getAccountsByWalletFlow(walletId: Long): Flow<List<AccountInfo>> {
         return queries.selectByWalletId(walletId)
+            .asFlow()
+            .mapToList(Dispatchers.Default)
+            .map { list -> list.map { it.toAccountInfo() } }
+    }
+
+    override fun getNativeAccountsByWalletFlow(walletId: Long): Flow<List<AccountInfo>> {
+        return queries.selectNativeAccountsByWalletId(walletId)
+            .asFlow()
+            .mapToList(Dispatchers.Default)
+            .map { list -> list.map { it.toAccountInfo() } }
+    }
+
+    override fun getTokensByParentFlow(parentId: String): Flow<List<AccountInfo>> {
+        return queries.selectTokensByParentId(parentId)
             .asFlow()
             .mapToList(Dispatchers.Default)
             .map { list -> list.map { it.toAccountInfo() } }
@@ -28,6 +41,7 @@ class AccountRepository(database: KryptaKeepDatabase) : AccountRepositoryInterfa
 
     override suspend fun insertAccount(account: AccountInfo) {
         withContext(Dispatchers.IO) {
+            val tokenAddress = account.type.tokenContractAddress
             queries.insert(
                 id = account.id,
                 wallet_id = account.walletId,
@@ -35,15 +49,30 @@ class AccountRepository(database: KryptaKeepDatabase) : AccountRepositoryInterfa
                 amount = account.amount,
                 type = account.type.toDbCode(),
                 address = account.address,
-                derivation_index = account.derivationIndex,
+                account_index = account.accountIndex,
+                derivation_path = account.derivationPath,
                 params = account.params ?: account.type.toParamsJson(),
-                symbol = account.symbol
+                symbol = account.symbol,
+                parent_account_id = account.parentAccountId,
+                token_address = tokenAddress
             )
         }
     }
 
-    override suspend fun getMaxDerivationIndexByWalletAndAccountType(walletId: Long, type: String): Long? = withContext(Dispatchers.IO) {
+    override suspend fun getMaxAccountIndexByWalletAndAccountType(walletId: Long, type: String): Long? = withContext(Dispatchers.IO) {
         queries.maxDerivationIndexByWalletAndAccountType(walletId, type).executeAsOne().max_index
+    }
+
+    override suspend fun existsByDerivationPath(walletId: Long, derivationPath: String): Boolean = withContext(Dispatchers.IO) {
+        queries.existsByDerivationPath(walletId, derivationPath).executeAsOne()
+    }
+
+    override suspend fun existsTokenForParent(parentId: String, tokenAddress: String): Boolean = withContext(Dispatchers.IO) {
+        queries.existsTokenForParent(parentId, tokenAddress).executeAsOne()
+    }
+
+    override suspend fun countTokensByParent(parentId: String): Int = withContext(Dispatchers.IO) {
+        queries.countTokensByParent(parentId).executeAsOne().toInt()
     }
 
     override suspend fun updateAmount(accountId: String, amount: String) {
@@ -60,6 +89,7 @@ class AccountRepository(database: KryptaKeepDatabase) : AccountRepositoryInterfa
 
     override suspend fun deleteAccount(id: String) {
         withContext(Dispatchers.IO) {
+            queries.deleteTokensByParentId(id)
             queries.deleteById(id)
         }
     }
@@ -70,6 +100,13 @@ class AccountRepository(database: KryptaKeepDatabase) : AccountRepositoryInterfa
         }
     }
 
+    override suspend fun getNativeAccountsByWalletAndType(walletId: Long, type: String): List<AccountInfo> =
+        withContext(Dispatchers.IO) {
+            queries.selectNativeAccountsByWalletAndType(walletId, type)
+                .executeAsList()
+                .map { it.toAccountInfo() }
+        }
+
     private fun com.ultrabytecoder.kryptakeep.db.Accounts.toAccountInfo(): AccountInfo = AccountInfo(
         id = id,
         walletId = wallet_id,
@@ -78,7 +115,9 @@ class AccountRepository(database: KryptaKeepDatabase) : AccountRepositoryInterfa
         type = AccountType.fromCode(type, params),
         symbol = symbol,
         address = address,
-        derivationIndex = derivation_index,
-        params = params
+        accountIndex = account_index,
+        derivationPath = derivation_path,
+        params = params,
+        parentAccountId = parent_account_id
     )
 }

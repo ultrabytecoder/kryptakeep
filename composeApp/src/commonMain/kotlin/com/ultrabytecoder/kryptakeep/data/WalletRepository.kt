@@ -2,17 +2,18 @@ package com.ultrabytecoder.kryptakeep.data
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
-import com.ultrabytecoder.kryptakeep.db.KryptaKeepDatabase
 import com.ultrabytecoder.kryptakeep.domain.model.WalletInfo
 import com.ultrabytecoder.kryptakeep.domain.repository.WalletRepository as WalletRepositoryInterface
+import com.ultrabytecoder.kryptakeep.security.SecretCipher
+import com.ultrabytecoder.kryptakeep.security.wipe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-class WalletRepository(database: KryptaKeepDatabase) : WalletRepositoryInterface {
-    private val queries = database.kryptaKeepDatabaseQueries
+class WalletRepository(private val databaseProvider: DatabaseProvider) : WalletRepositoryInterface {
+    private val queries get() = databaseProvider.database().kryptaKeepDatabaseQueries
 
     override fun getWalletsFlow(): Flow<List<WalletInfo>> {
         return queries.selectAllWallets()
@@ -26,15 +27,21 @@ class WalletRepository(database: KryptaKeepDatabase) : WalletRepositoryInterface
     }
 
     override suspend fun getMasterSeed(id: Long): ByteArray? = withContext(Dispatchers.IO) {
-        queries.selectWalletById(id).executeAsOneOrNull()?.master_seed
+        val stored = queries.selectWalletById(id).executeAsOneOrNull()?.master_seed
+            ?: return@withContext null
+        try {
+            SecretCipher.decrypt(stored).plaintext
+        } finally {
+            stored.wipe()
+        }
     }
 
-    override suspend fun insertWallet(name: String, masterSeed: ByteArray, encryptedMnemonic: ByteArray?): Long = withContext(Dispatchers.IO) {
+    override suspend fun insertWallet(name: String, masterSeed: ByteArray, mnemonic: ByteArray?): Long = withContext(Dispatchers.IO) {
         queries.insertWallet(
             id = null,
             name = name,
-            master_seed = masterSeed,
-            encrypted_mnemonic = encryptedMnemonic
+            master_seed = SecretCipher.encrypt(masterSeed),
+            mnemonic = mnemonic?.let { SecretCipher.encrypt(it) }
         )
         queries.lastInsertRowId().executeAsOne()
     }
@@ -45,8 +52,14 @@ class WalletRepository(database: KryptaKeepDatabase) : WalletRepositoryInterface
         }
     }
 
-    override suspend fun getEncryptedMnemonic(id: Long): ByteArray? = withContext(Dispatchers.IO) {
-        queries.selectEncryptedMnemonicById(id).executeAsOneOrNull()?.encrypted_mnemonic
+    override suspend fun getStoredMnemonic(id: Long): ByteArray? = withContext(Dispatchers.IO) {
+        val stored = queries.selectWalletById(id).executeAsOneOrNull()?.mnemonic
+            ?: return@withContext null
+        try {
+            SecretCipher.decrypt(stored).plaintext
+        } finally {
+            stored.wipe()
+        }
     }
 
     override suspend fun renameWallet(id: Long, name: String) {

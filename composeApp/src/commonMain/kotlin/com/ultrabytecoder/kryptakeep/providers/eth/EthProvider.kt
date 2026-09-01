@@ -2,6 +2,9 @@ package com.ultrabytecoder.kryptakeep.providers
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
+import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionStatus
@@ -36,7 +39,7 @@ class EthProvider(
     override suspend fun getAddress(accountId: String): String {
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
-        val key = deriveEthKey(account.derivationIndex)
+        val key = deriveEthKeyFromPath(account.derivationPath)
         return ethAddressFromPublicKey(key)
     }
 
@@ -60,7 +63,11 @@ class EthProvider(
             }
             val body = response.body<String>()
             val json = Json.parseToJsonElement(body).jsonObject
-            val hexBalance = json["result"]!!.jsonPrimitive.content.removePrefix("0x")
+            val result = json["result"]
+                ?: json["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
+                    ?.let { throw IllegalStateException("ETH RPC error: $it") }
+                ?: throw IllegalStateException("ETH RPC returned no result and no error: $body")
+            val hexBalance = result.jsonPrimitive.content.removePrefix("0x")
             return BigDecimal.fromLong(hexBalance.toLong(16))
         } finally {
             client.close()
@@ -159,47 +166,137 @@ class EthProvider(
         )
     }
 
-    override suspend fun createTransaction(address: String, amount: BigDecimal, accountId: String): String {
-        val weiAmount = amount.multiply(BigDecimal.fromLong(1_000_000_000_000_000_000)).longValue()
+    override suspend fun createTransaction(
+        address: String,
+        amount: BigDecimal,
+        accountId: String,
+        feeParams: CustomFeeParams?
+    ): String {
+        val weiAmountBD = amount.multiply(BigDecimal.fromLong(1_000_000_000_000_000_000))
+        if (weiAmountBD > BigDecimal.fromLong(Long.MAX_VALUE)) {
+            throw IllegalArgumentException("Amount exceeds maximum representable wei value")
+        }
+        val weiAmount = weiAmountBD.longValue(exactRequired = true)
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
-        val fromKey = deriveEthKey(account.derivationIndex)
+        val fromKey = deriveEthKeyFromPath(account.derivationPath)
         val fromAddress = ethAddressFromPublicKey(fromKey)
 
-        val client = createClient()
+            val client = createClient()
         try {
             val nonce = ethGetTransactionCount(client, fromAddress)
-            val gasTipCap = ethMaxPriorityFeePerGas(client)
-            val baseFee = ethBaseFee(client)
-            val gasFeeCap = baseFee + gasTipCap
+
+            // Validate feeParams type
+            if (feeParams != null && feeParams !is CustomFeeParams.Eth) {
+                throw IllegalArgumentException("ETH provider received ${feeParams::class.simpleName}")
+            }
+
+            val (gasTipCap, gasFeeCap) = when (feeParams) {
+                is CustomFeeParams.Eth -> {
+                    feeParams.maxPriorityFeePerGasMilliGwei * 1_000_000L to feeParams.maxFeePerGasMilliGwei * 1_000_000L
+                }
+                else -> {
+                    val computed = computeFeeParams(client)
+                    computed.tipCap to computed.feeCap
+                }
+            }
+
+            val gasLimit = (feeParams as? CustomFeeParams.Eth)?.gasLimit ?: run {
+                val estimatedGas = ethEstimateGas(client, fromAddress, address, "0x", gasFeeCap, gasTipCap)
+                if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethGasLimit
+            }
 
             return signEip1559Transaction(
-                nonce, gasTipCap, gasFeeCap, networkConfig.ethGasLimit, address, weiAmount, byteArrayOf(), fromKey
+                nonce, gasTipCap, gasFeeCap, gasLimit, address, weiAmount, byteArrayOf(), fromKey
             )
         } finally {
             client.close()
         }
     }
 
-    override suspend fun estimateFee(accountId: String, amount: BigDecimal): BigDecimal {
+    override suspend fun estimateFee(
+        accountId: String,
+        amount: BigDecimal,
+        recipientAddress: String?,
+        feeParams: CustomFeeParams?
+    ): FeeEstimation {
+        val fromAddress = getAddress(accountId)
+
+        // Require real recipient for accurate contract gas estimation (not self-transfer)
+        val toAddress = recipientAddress ?: throw IllegalArgumentException("Recipient address is required for accurate ETH fee estimation")
+
         val client = createClient()
         try {
-            val gasTipCap = ethMaxPriorityFeePerGas(client)
-            val baseFee = ethBaseFee(client)
-            val gasFeeCap = baseFee + gasTipCap
-            val feeWei = gasFeeCap * networkConfig.ethGasLimit
-            return BigDecimal.fromLong(feeWei).divide(BigDecimal.fromLong(1_000_000_000_000_000_000))
+            // Compute fee parameters if not provided (Auto mode)
+            var usedFallbackFees = false
+            val (tipCap, feeCap) = when (feeParams) {
+                is CustomFeeParams.Eth -> {
+                    val priorityFeeWei = feeParams.maxPriorityFeePerGasMilliGwei * 1_000_000L
+                    val maxFeeWei = feeParams.maxFeePerGasMilliGwei * 1_000_000L
+                    priorityFeeWei to maxFeeWei
+                }
+                else -> {
+                    val computed = computeFeeParams(client)
+                    usedFallbackFees = computed.usedFallback
+                    computed.tipCap to computed.feeCap
+                }
+            }
+
+            // Skip ethEstimateGas if user provided gasLimit
+            val gasLimit = (feeParams as? CustomFeeParams.Eth)?.gasLimit ?: run {
+                val estimatedGas = ethEstimateGas(client, fromAddress, toAddress, "0x", feeCap, tipCap)
+                if (estimatedGas > 0) estimatedGas * NetworkConfig.ETH_GAS_BUFFER_NUMERATOR / NetworkConfig.ETH_GAS_BUFFER_DENOMINATOR else networkConfig.ethGasLimit
+            }
+
+            val feeWei = BigDecimal.fromLong(feeCap).multiply(BigDecimal.fromLong(gasLimit))
+            val totalCost = feeWei.divide(BigDecimal.fromLong(1_000_000_000_000_000_000))
+
+            val appliedParams = when (feeParams) {
+                is CustomFeeParams.Eth -> CustomFeeParams.Eth(
+                    feeParams.maxPriorityFeePerGasMilliGwei,
+                    feeParams.maxFeePerGasMilliGwei,
+                    feeParams.gasLimit
+                )
+                else -> {
+                    // Auto mode: reconstruct params from the values fetched via computeFeeParams
+                    val tipMGwei = tipCap.weiToMilliGwei().coerceAtLeast(1L)
+                    val capMGwei = feeCap.weiToMilliGwei().coerceAtLeast(tipMGwei + 1L)
+                    CustomFeeParams.Eth(tipMGwei, capMGwei)
+                }
+            }
+
+            return FeeEstimation(totalCost, appliedParams, usedFallbackFees)
+        } finally {
+            client.close()
+        }
+    }
+
+    override suspend fun broadcast(rawTransaction: String): String {
+        val client = createClient()
+        try {
+            return ethSendRawTransaction(client, rawTransaction)
         } finally {
             client.close()
         }
     }
 
     override suspend fun send(address: String, amount: BigDecimal, accountId: String): String {
-        val rawTxHex = createTransaction(address, amount, accountId)
+        val rawTxHex = createTransaction(address, amount, accountId, null)
+        return broadcast(rawTxHex)
+    }
 
+    override suspend fun feePresets(accountId: String): FeePresets {
         val client = createClient()
         try {
-            return ethSendRawTransaction(client, rawTxHex)
+            val computed = computeFeeParams(client)
+            return computeFeePresets(computed.tipCap, computed.feeCap)
+        } catch (_: Exception) {
+            return FeePresets(
+                auto = CustomFeeParams.Eth(25_000L, 35_000L),
+                slow = CustomFeeParams.Eth(15_000L, 20_000L),
+                medium = CustomFeeParams.Eth(25_000L, 35_000L),
+                fast = CustomFeeParams.Eth(40_000L, 60_000L)
+            )
         } finally {
             client.close()
         }

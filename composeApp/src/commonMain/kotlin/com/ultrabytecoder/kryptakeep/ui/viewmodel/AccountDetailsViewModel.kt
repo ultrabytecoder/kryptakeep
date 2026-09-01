@@ -2,77 +2,141 @@ package com.ultrabytecoder.kryptakeep.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ultrabytecoder.kryptakeep.data.SettingsKeys
+import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
+import com.ultrabytecoder.kryptakeep.domain.model.FiatCurrency
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionInfo
+import com.ultrabytecoder.kryptakeep.domain.provider.FiatQuoteProvider
+import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetAccountAddressUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetAccountsUseCase
+import com.ultrabytecoder.kryptakeep.ui.util.formatFiat
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+data class AccountDetailUiState(
+    val parent: AccountInfo? = null,
+    val tokens: List<AccountInfo> = emptyList(),
+    val selectedAccount: AccountInfo? = null,
+    val address: String? = null,
+    val transactions: List<TransactionInfo> = emptyList(),
+    val isLoadingMore: Boolean = false,
+    val hasMore: Boolean = true,
+    val error: String? = null
+)
+
 class AccountDetailsViewModel(
-    accountId: String,
+    val accountId: String,
+    val preselectedTokenId: String?,
     private val getAccounts: GetAccountsUseCase,
     private val getAccountAddress: GetAccountAddressUseCase,
-    private val transactionRepository: TransactionRepository
+    private val accountRepository: AccountRepository,
+    private val transactionRepository: TransactionRepository,
+    settingsStorage: SettingsStorage,
+    private val quoteProvider: FiatQuoteProvider
 ) : ViewModel() {
-    private val _account = MutableStateFlow<AccountInfo?>(null)
-    val account: StateFlow<AccountInfo?> = _account.asStateFlow()
 
-    private val _address = MutableStateFlow<String?>(null)
-    val address: StateFlow<String?> = _address.asStateFlow()
+    private val _uiState = MutableStateFlow(AccountDetailUiState())
+    val uiState: StateFlow<AccountDetailUiState> = _uiState.asStateFlow()
 
-    private val _transactions = MutableStateFlow<List<TransactionInfo>>(emptyList())
-    val transactions: StateFlow<List<TransactionInfo>> = _transactions.asStateFlow()
+    // Legacy flows for backward compat
+    val account: StateFlow<AccountInfo?> = _uiState.map { it.parent }.stateIn(viewModelScope, SharingStarted.Lazily, null)
+    val address: StateFlow<String?> = _uiState.map { it.address }.stateIn(viewModelScope, SharingStarted.Lazily, null)
+    val transactions: StateFlow<List<TransactionInfo>> = _uiState.map { it.transactions }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    val isLoadingMore: StateFlow<Boolean> = _uiState.map { it.isLoadingMore }.stateIn(viewModelScope, SharingStarted.Lazily, false)
+    val hasMore: StateFlow<Boolean> = _uiState.map { it.hasMore }.stateIn(viewModelScope, SharingStarted.Lazily, true)
+    val error: StateFlow<String?> = _uiState.map { it.error }.stateIn(viewModelScope, SharingStarted.Lazily, null)
 
-    private val _isLoadingMore = MutableStateFlow(false)
-    val isLoadingMore: StateFlow<Boolean> = _isLoadingMore.asStateFlow()
+    val fiatCurrency: StateFlow<FiatCurrency> = MutableStateFlow(
+        FiatCurrency.fromCode(settingsStorage.getString(SettingsKeys.FIAT_CURRENCY))
+    ).asStateFlow()
 
-    private val _hasMore = MutableStateFlow(true)
-    val hasMore: StateFlow<Boolean> = _hasMore.asStateFlow()
+    private val _selectedAccountFlow = MutableStateFlow<AccountInfo?>(null)
 
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    val selectedFiatBalance: StateFlow<String?> = combine(
+        _selectedAccountFlow,
+        fiatCurrency
+    ) { selected, currency ->
+        if (selected == null) return@combine null
+        val amount = selected.amount.toDoubleOrNull() ?: 0.0
+        val price = quoteProvider.getPrice(selected.symbol, currency)
+        formatFiat(amount * price, currency.code)
+    }
+    .stateIn(viewModelScope, SharingStarted.Lazily, null)
 
     private val pageSize = 20L
 
     init {
         viewModelScope.launch {
             try {
-                _account.value = getAccounts.byId(accountId)
+                val parent = getAccounts.byId(accountId)
                     ?: throw IllegalStateException("Account not found: $accountId")
-                _address.value = getAccountAddress(accountId)
-                loadNextPage(accountId)
+                val tokens = accountRepository.getTokensByParentFlow(accountId).first()
+                val addr = getAccountAddress(accountId)
+
+                // Determine which account to select (preselected token or parent)
+                val selected = preselectedTokenId?.let { id ->
+                    tokens.find { it.id == id } ?: parent
+                } ?: parent
+
+                _selectedAccountFlow.value = selected
+                _uiState.value = AccountDetailUiState(
+                    parent = parent,
+                    tokens = tokens,
+                    selectedAccount = selected,
+                    address = addr
+                )
+                loadTransactions(selected.id)
             } catch (e: Exception) {
-                _error.value = e.message ?: "Failed to load account details"
+                _uiState.value = _uiState.value.copy(error = e.message ?: "Failed to load account details")
             }
         }
     }
 
+    fun selectAccount(account: AccountInfo) {
+        _selectedAccountFlow.value = account
+        _uiState.value = _uiState.value.copy(
+            selectedAccount = account,
+            transactions = emptyList(),
+            hasMore = true
+        )
+        viewModelScope.launch { loadTransactions(account.id) }
+    }
+
     fun loadNextPage() {
-        val accountId = _account.value?.id ?: return
-        viewModelScope.launch { loadNextPage(accountId) }
+        val selectedId = _uiState.value.selectedAccount?.id ?: return
+        viewModelScope.launch { loadTransactions(selectedId) }
     }
 
     fun clearError() {
-        _error.value = null
+        _uiState.value = _uiState.value.copy(error = null)
     }
 
-    private suspend fun loadNextPage(accountId: String) {
-        if (_isLoadingMore.value || !_hasMore.value) return
-        _isLoadingMore.value = true
+    private suspend fun loadTransactions(accountId: String) {
+        if (_uiState.value.isLoadingMore || !_uiState.value.hasMore) return
+        _uiState.value = _uiState.value.copy(isLoadingMore = true)
         try {
+            val currentTxs = _uiState.value.transactions
             val newItems = transactionRepository.getTransactionsByAccount(
-                accountId, pageSize, _transactions.value.size.toLong()
+                accountId, pageSize, currentTxs.size.toLong()
             )
-            _hasMore.value = newItems.size >= pageSize
-            _transactions.value = _transactions.value + newItems
+            _uiState.value = _uiState.value.copy(
+                hasMore = newItems.size == pageSize.toInt(),
+                transactions = currentTxs + newItems
+            )
         } catch (e: Exception) {
-            _error.value = e.message ?: "Failed to load transactions"
+            _uiState.value = _uiState.value.copy(error = e.message ?: "Failed to load transactions")
         } finally {
-            _isLoadingMore.value = false
+            _uiState.value = _uiState.value.copy(isLoadingMore = false)
         }
     }
 }

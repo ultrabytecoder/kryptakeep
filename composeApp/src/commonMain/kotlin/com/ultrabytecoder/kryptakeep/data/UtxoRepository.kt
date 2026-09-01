@@ -2,7 +2,6 @@ package com.ultrabytecoder.kryptakeep.data
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
-import com.ultrabytecoder.kryptakeep.db.KryptaKeepDatabase
 import com.ultrabytecoder.kryptakeep.domain.model.UtxoInfo
 import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository as UtxoRepositoryInterface
 import kotlinx.coroutines.Dispatchers
@@ -11,8 +10,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-class UtxoRepository(database: KryptaKeepDatabase) : UtxoRepositoryInterface {
-    private val queries = database.kryptaKeepDatabaseQueries
+class UtxoRepository(private val databaseProvider: DatabaseProvider) : UtxoRepositoryInterface {
+    private val queries get() = databaseProvider.database().kryptaKeepDatabaseQueries
 
     override fun getUnspentByAccountFlow(accountId: String): Flow<List<UtxoInfo>> {
         return queries.selectUtxosByAccountId(accountId)

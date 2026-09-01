@@ -1,5 +1,7 @@
 package com.ultrabytecoder.kryptakeep.ui.screens
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.keyframes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,10 +10,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -20,10 +25,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,10 +38,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
@@ -44,6 +56,12 @@ import compose.icons.feathericons.Check
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
+import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
+import com.ultrabytecoder.kryptakeep.platform.preventScreenshots
+import com.ultrabytecoder.kryptakeep.security.wipe
+import com.ultrabytecoder.kryptakeep.ui.components.Numpad
+import com.ultrabytecoder.kryptakeep.ui.util.SecureScreen
+import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.ExportMnemonicViewModel
 import kotlinx.coroutines.delay
 
@@ -53,10 +71,37 @@ fun ExportMnemonicScreen(
     navController: NavController,
     viewModel: ExportMnemonicViewModel
 ) {
+    SecureScreen {
+        ExportMnemonicScreenInner(navController, viewModel)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExportMnemonicScreenInner(
+    navController: NavController,
+    viewModel: ExportMnemonicViewModel
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var mnemonicVisible by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
+    val passwordField = remember { SecureTextFieldState() }
+
+    remember {
+        viewModel.onClipboardClear = { clipboardManager.setText(AnnotatedString("")) }
+    }
+    val focusRequester = remember { FocusRequester() }
+
+    DisposableEffect(Unit) {
+        onDispose { passwordField.wipe() }
+    }
+
+    LaunchedEffect((state as? ExportMnemonicViewModel.State.AuthRequired)?.securityMethod) {
+        if ((state as? ExportMnemonicViewModel.State.AuthRequired)?.securityMethod == SecurityMethod.PASSWORD) {
+            focusRequester.requestFocus()
+        }
+    }
 
     LaunchedEffect(copied) {
         if (copied) {
@@ -82,8 +127,126 @@ fun ExportMnemonicScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .padding(16.dp)
+                .preventScreenshots()
         ) {
             when (state) {
+                is ExportMnemonicViewModel.State.AuthRequired -> {
+                    val auth = state as ExportMnemonicViewModel.State.AuthRequired
+                    val isPassword = auth.securityMethod == SecurityMethod.PASSWORD
+
+                    // Shake animation — triggers on each new shakeTriggerId
+                    val shakeAnimatable = remember { Animatable(0f) }
+                    LaunchedEffect(auth.shakeTriggerId) {
+                        shakeAnimatable.animateTo(
+                            targetValue = 0f,
+                            animationSpec = keyframes {
+                                durationMillis = 250
+                                0f at 0
+                                -12f at 50
+                                12f at 100
+                                -8f at 150
+                                8f at 200
+                                0f at 250
+                            }
+                        )
+                    }
+                    val shakeOffset = shakeAnimatable.value
+
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = if (isPassword) Arrangement.Center else Arrangement.SpaceBetween
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                if (isPassword) "Enter your password" else "Enter your PIN",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                "Verify your identity to view the recovery phrase",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Spacer(modifier = Modifier.height(32.dp))
+
+                            if (isPassword) {
+                                OutlinedTextField(
+                                    value = passwordField.text,
+                                    onValueChange = {
+                                        passwordField.update(it)
+                                        viewModel.onPasswordInput(it)
+                                    },
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                    singleLine = true,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .focusRequester(focusRequester)
+                                        .offset { IntOffset(shakeOffset.toInt(), 0) },
+                                    isError = auth.errorMessage != null,
+                                    enabled = !auth.isLocked && !auth.isProcessing
+                                )
+                            } else {
+                                PinDotsInline(
+                                    enteredLength = auth.enteredPinLength,
+                                    pinLength = auth.pinLength,
+                                    modifier = Modifier.offset { IntOffset(shakeOffset.toInt(), 0) }
+                                )
+                            }
+
+                            if (auth.isProcessing) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else if (auth.isLocked) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "Too many attempts. Try again in ${auth.lockSecondsRemaining}s",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            } else if (auth.errorMessage != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    auth.errorMessage!!,
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+
+                        if (isPassword) {
+                            Spacer(modifier = Modifier.height(24.dp))
+                            if (auth.isProcessing) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                            } else {
+                                Button(
+                                    onClick = { viewModel.submitPassword() },
+                                    enabled = !auth.isLocked && passwordField.text.isNotBlank(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp)
+                                ) {
+                                    Text("Verify", style = MaterialTheme.typography.titleMedium)
+                                }
+                            }
+                        } else {
+                            Numpad(
+                                onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
+                                onDeleteClick = { viewModel.removeDigit() },
+                                isLocked = auth.isLocked || auth.isProcessing
+                            )
+                        }
+                    }
+                }
+
                 is ExportMnemonicViewModel.State.Loading -> {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -95,6 +258,18 @@ fun ExportMnemonicScreen(
 
                 is ExportMnemonicViewModel.State.Loaded -> {
                     val mnemonic = (state as ExportMnemonicViewModel.State.Loaded).mnemonic
+
+                    // Wipe the mnemonic from memory when the screen leaves the composition
+                    DisposableEffect(mnemonic) {
+                        onDispose {
+                            mnemonic.wipe()
+                            viewModel.clearSensitiveData()
+                        }
+                    }
+                    // Materialize the immutable String only while the phrase is actually
+                    // displayed (NEW-7): it cannot be wiped, so it should not exist
+                    // while the phrase is hidden.
+                    val mnemonicText = if (mnemonicVisible) mnemonic.concatToString() else null
 
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -155,7 +330,7 @@ fun ExportMnemonicScreen(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = if (mnemonicVisible) mnemonic else "\u2022".repeat(mnemonic.length),
+                                text = mnemonicText ?: "\u2022".repeat(mnemonic.size),
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.Medium,
                                 maxLines = if (mnemonicVisible) 10 else 1,
@@ -168,8 +343,11 @@ fun ExportMnemonicScreen(
 
                     OutlinedButton(
                         onClick = {
-                            clipboardManager.setText(AnnotatedString(mnemonic))
-                            copied = true
+                            mnemonicText?.let {
+                                clipboardManager.setText(AnnotatedString(it))
+                                copied = true
+                                viewModel.scheduleClipboardClear()
+                            }
                         },
                         enabled = mnemonicVisible,
                         modifier = Modifier.fillMaxWidth(),

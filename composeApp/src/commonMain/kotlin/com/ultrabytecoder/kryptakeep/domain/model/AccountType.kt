@@ -1,5 +1,7 @@
 package com.ultrabytecoder.kryptakeep.domain.model
 
+import com.ultrabytecoder.kryptakeep.data.CustomNodeKeys
+import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
@@ -9,15 +11,47 @@ sealed class AccountType(val type: String) {
     data object Btc : AccountType("BTC")
     data object Eth : AccountType("ETH")
     data object Trx : AccountType("TRX")
-    data object Ton : AccountType("TON")
+    data class Ton(val walletVersion: String = "V3R2") : AccountType("TON")
     data class Erc20(val tokenAddress: String) : AccountType("ERC20")
     data class Trc20(val tokenAddress: String) : AccountType("TRC20")
+    data class TonToken(val jettonMasterAddress: String) : AccountType("TON_TOKEN")
+
+    val isNative: Boolean get() = this is Btc || this is Eth || this is Trx || this is Ton
+    val isToken: Boolean get() = this is Erc20 || this is Trc20 || this is TonToken
+
+    /** Human-readable chain label for tokens, e.g. "ERC20" / "TRC20". */
+    val chainLabel: String
+        get() = when (this) {
+            is Erc20 -> "ERC20"
+            is Trc20 -> "TRC20"
+            is TonToken -> "TON"
+            else -> type
+        }
+
+    /** Returns the parent native chain for a token type, or null for native types. */
+    fun parentChain(): AccountType? = when (this) {
+        is Erc20 -> Eth
+        is Trc20 -> Trx
+        is TonToken -> Ton()
+        else -> null
+    }
+
+    /** Returns the on-chain contract address for token types (lowercased), or null for native types. */
+    val tokenContractAddress: String?
+        get() = when (this) {
+            is Erc20 -> tokenAddress.lowercase()
+            is Trc20 -> tokenAddress.lowercase()
+            is TonToken -> jettonMasterAddress.lowercase()
+            else -> null
+        }
 
     fun toDbCode(): String = type
 
     fun toParamsJson(): String? = when (this) {
-        is Erc20 -> """{"tokenAddress":"$tokenAddress"}"""
-        is Trc20 -> """{"tokenAddress":"$tokenAddress"}"""
+        is Erc20 -> """{"tokenAddress":"$tokenContractAddress"}"""
+        is Trc20 -> """{"tokenAddress":"$tokenContractAddress"}"""
+        is TonToken -> """{"jettonMasterAddress":"$tokenContractAddress"}"""
+        is Ton -> """{"walletVersion":"$walletVersion"}"""
         else -> null
     }
 
@@ -28,7 +62,10 @@ sealed class AccountType(val type: String) {
             "BTC" -> Btc
             "ETH" -> Eth
             "TRX" -> Trx
-            "TON" -> Ton
+            "TON" -> {
+                val version = parseWalletVersion(params)
+                Ton(version)
+            }
             "ERC20" -> {
                 val tokenAddress = parseTokenAddress(params)
                 Erc20(tokenAddress)
@@ -36,6 +73,10 @@ sealed class AccountType(val type: String) {
             "TRC20" -> {
                 val tokenAddress = parseTokenAddress(params)
                 Trc20(tokenAddress)
+            }
+            "TON_TOKEN" -> {
+                val jettonMasterAddress = parseJettonMasterAddress(params)
+                TonToken(jettonMasterAddress)
             }
             else -> throw IllegalArgumentException("Unsupported account type: $code")
         }
@@ -45,5 +86,39 @@ sealed class AccountType(val type: String) {
             return parsed?.get("tokenAddress")?.jsonPrimitive?.content
                 ?: throw IllegalArgumentException("Missing tokenAddress in params")
         }
+
+        private fun parseWalletVersion(params: String?): String {
+            val parsed: JsonObject? = params?.let { json.parseToJsonElement(it).jsonObject }
+            return parsed?.get("walletVersion")?.jsonPrimitive?.content ?: "V3R2"
+        }
+
+        private fun parseJettonMasterAddress(params: String?): String {
+            val parsed: JsonObject? = params?.let { json.parseToJsonElement(it).jsonObject }
+            return parsed?.get("jettonMasterAddress")?.jsonPrimitive?.content
+                ?: throw IllegalArgumentException("Missing jettonMasterAddress in params")
+        }
+    }
+}
+
+/**
+ * Native blockchains for which the user may configure a custom RPC/API node.
+ * Token types (ERC20/TRC20) inherit the parent chain's node, so they are not
+ * listed separately.
+ */
+enum class ChainType(
+    val displayName: String,
+    val storageKey: String,
+) {
+    BTC("Bitcoin",  CustomNodeKeys.BTC),
+    ETH("Ethereum", CustomNodeKeys.ETH),
+    TRX("Tron",     CustomNodeKeys.TRX),
+    TON("TON",      CustomNodeKeys.TON);
+
+    /** Default URL for this chain in the supplied [config]. */
+    fun defaultUrl(config: NetworkConfig): String = when (this) {
+        BTC -> config.btcMempoolApiBase
+        ETH -> config.ethRpcUrl
+        TRX -> config.tronApiBase
+        TON -> config.tonApiBase
     }
 }

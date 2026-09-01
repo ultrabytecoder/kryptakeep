@@ -3,6 +3,7 @@ package com.ultrabytecoder.kryptakeep.providers
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
 import com.ultrabytecoder.kryptakeep.domain.model.AccountType
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionDirection
 import com.ultrabytecoder.kryptakeep.domain.model.TransactionStatus
 import com.ultrabytecoder.kryptakeep.providers.tron.Trc20TokenProvider
@@ -107,7 +108,8 @@ class Trc20TokenProviderSyncTest {
 
     private fun testAccount(index: Long = 0) = AccountInfo(
         id = ACCOUNT_ID, walletId = 1, name = "Test", amount = "0",
-        type = AccountType.Trx, symbol = "TRX", address = null, derivationIndex = index
+        type = AccountType.Trx, symbol = "TRX", address = null, accountIndex = index,
+        derivationPath = "m/44'/195'/$index'/0/0"
     )
 
     private fun createMockClientFactory(
@@ -155,7 +157,7 @@ class Trc20TokenProviderSyncTest {
         createClient: () -> HttpClient = createMockClientFactory()
     ): Trc20TokenProvider {
         val masterKey = DeterministicWallet.generate(Hex.decode(SEED_HEX))
-        val destAccount = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Trx, "TRX", null, 1)
+        val destAccount = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Trx, "TRX", null, 1, "m/44'/195'/1'/0/0")
         return Trc20TokenProvider(
             masterKey,
             FakeAccountRepository(mapOf(ACCOUNT_ID to account, DEST_ACCOUNT_ID to destAccount)),
@@ -354,5 +356,172 @@ class Trc20TokenProviderSyncTest {
         val transactions = fakeTransactionRepo.getTransactionsByAccount(ACCOUNT_ID, 100, 0)
         assertEquals(0, transactions.size,
             "Transfers from other token contracts should be filtered out")
+    }
+
+    @Test
+    fun feePresets_fallsBackWhenDecimalsConstantResultMissing() = runTest {
+        val errorResponse = """{"result":{"result":false,"code":"CONTRACT_VALIDATE_ERROR","message":"636f6e74726163742076616c6964617465206572726f72"},"energy_used":0}"""
+        val energyResponse = """{"energy_used":2000000}"""
+        val transactionsResponse = """
+        {
+            "data": [
+                {
+                    "transaction_id": "eee5550000000000000000000000000000000000000000000000000000000000",
+                    "block_timestamp": 1700000004000,
+                    "from": "TNPeeaaFBmJcrLnKbPqL8qSbKQ3MQ2eFJj",
+                    "to": "TNPeeaaFBmJcrLnKbPqL8qSbKQ3MQ2eFJj",
+                    "value": "1000000",
+                    "token_info": {
+                        "symbol": "USDT",
+                        "decimals": 6,
+                        "address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+                    },
+                    "finalResult": "SUCCESS"
+                }
+            ],
+            "meta": {"fingerprint": "fp999"}
+        }
+        """.trimIndent()
+
+        var triggerCount = 0
+        val fallbackFactory: () -> HttpClient = {
+            HttpClient(MockEngine) {
+                engine {
+                    addHandler { request ->
+                        when {
+                            request.url.encodedPath.contains("/transactions/trc20") ->
+                                respond(
+                                    content = transactionsResponse,
+                                    status = HttpStatusCode.OK,
+                                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                                )
+                            request.url.encodedPath.contains("/wallet/triggersmartcontract") -> {
+                                val response = if (triggerCount == 0) errorResponse else energyResponse
+                                triggerCount++
+                                respond(
+                                    content = response,
+                                    status = HttpStatusCode.OK,
+                                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                                )
+                            }
+                            else ->
+                                respond(
+                                    content = "{}",
+                                    status = HttpStatusCode.OK,
+                                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                                )
+                        }
+                    }
+                }
+            }
+        }
+
+        val provider = createProvider(createClient = fallbackFactory)
+        val presets = provider.feePresets(ACCOUNT_ID)
+
+        val slow = (presets.slow as CustomFeeParams.Tron).feeLimitSun
+        val medium = (presets.medium as CustomFeeParams.Tron).feeLimitSun
+        val fast = (presets.fast as CustomFeeParams.Tron).feeLimitSun
+        assertEquals(2_200_000L, slow, "feePresets should work via transactions fallback when constant_result missing")
+        assertEquals(2_600_000L, medium)
+        assertEquals(3_000_000L, fast)
+    }
+
+    private fun createEnergyMockClientFactory(energyUsed: Long = 2_000_000L): () -> HttpClient {
+        var triggerCount = 0
+        return {
+            HttpClient(MockEngine) {
+                engine {
+                    addHandler {
+                        when {
+                            it.url.encodedPath.contains("/wallet/triggersmartcontract") -> {
+                                val response = if (triggerCount == 0) {
+                                    DECIMALS_RESPONSE
+                                } else {
+                                    """{"energy_used":$energyUsed}"""
+                                }
+                                triggerCount++
+                                respond(
+                                    content = response,
+                                    status = HttpStatusCode.OK,
+                                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                                )
+                            }
+                            else ->
+                                respond(
+                                    content = "{}",
+                                    status = HttpStatusCode.OK,
+                                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                                )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun feePresets_derivesFromSimulatedEnergy() = runTest {
+        val provider = createProvider(createClient = createEnergyMockClientFactory(energyUsed = 2_000_000L))
+
+        val presets = provider.feePresets(ACCOUNT_ID)
+
+        val slow = (presets.slow as CustomFeeParams.Tron).feeLimitSun
+        val medium = (presets.medium as CustomFeeParams.Tron).feeLimitSun
+        val fast = (presets.fast as CustomFeeParams.Tron).feeLimitSun
+        assertEquals(2_200_000L, slow, "slow should be 1.1x of simulated energy")
+        assertEquals(2_600_000L, medium, "medium should be 1.3x of simulated energy")
+        assertEquals(3_000_000L, fast, "fast should be 1.5x of simulated energy")
+    }
+
+    @Test
+    fun feePresets_clampsToBounds() = runTest {
+        val smallProvider = createProvider(createClient = createEnergyMockClientFactory(energyUsed = 10L))
+        val smallPresets = smallProvider.feePresets(ACCOUNT_ID)
+        assertEquals(1_000_000L, (smallPresets.slow as CustomFeeParams.Tron).feeLimitSun)
+        assertEquals(1_000_000L, (smallPresets.medium as CustomFeeParams.Tron).feeLimitSun)
+        assertEquals(1_000_000L, (smallPresets.fast as CustomFeeParams.Tron).feeLimitSun)
+
+        val bigProvider = createProvider(createClient = createEnergyMockClientFactory(energyUsed = 100_000_000_000L))
+        val bigPresets = bigProvider.feePresets(ACCOUNT_ID)
+        assertEquals(100_000_000L, (bigPresets.slow as CustomFeeParams.Tron).feeLimitSun)
+        assertEquals(100_000_000L, (bigPresets.medium as CustomFeeParams.Tron).feeLimitSun)
+        assertEquals(100_000_000L, (bigPresets.fast as CustomFeeParams.Tron).feeLimitSun)
+    }
+
+    @Test
+    fun feePresets_cachesEnergyEstimate() = runTest {
+        var triggerCount = 0
+        val countingFactory: () -> HttpClient = {
+            HttpClient(MockEngine) {
+                engine {
+                    addHandler {
+                        when {
+                            it.url.encodedPath.contains("/wallet/triggersmartcontract") -> {
+                                val response = if (triggerCount == 0) DECIMALS_RESPONSE else """{"energy_used":2000000}"""
+                                triggerCount++
+                                respond(
+                                    content = response,
+                                    status = HttpStatusCode.OK,
+                                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                                )
+                            }
+                            else ->
+                                respond(
+                                    content = "{}",
+                                    status = HttpStatusCode.OK,
+                                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                                )
+                        }
+                    }
+                }
+            }
+        }
+        val provider = createProvider(createClient = countingFactory)
+
+        provider.feePresets(ACCOUNT_ID)
+        provider.feePresets(ACCOUNT_ID)
+
+        assertEquals(2, triggerCount, "decimals + one energy simulation; second feePresets call should hit cache")
     }
 }

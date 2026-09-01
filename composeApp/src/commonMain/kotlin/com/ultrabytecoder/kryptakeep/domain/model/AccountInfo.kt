@@ -8,6 +8,8 @@ data class AccountInfo(
     val type: AccountType,
     val symbol: String,
     val address: String?,
-    val derivationIndex: Long,
-    val params: String? = null
+    val accountIndex: Long?,
+    val derivationPath: String,
+    val params: String? = null,
+    val parentAccountId: String? = null
 )

@@ -41,3 +41,55 @@ jobs:
       with:
         name: app-productionMainnet-debug
         path: composeApp/build/outputs/apk/productionMainnet/debug/*.apk
+
+  desktop-build:
+    name: Desktop (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+            task: :composeApp:packageDeb :composeApp:packageRpm :composeApp:packageUberJarForCurrentOS
+            artifact-path: composeApp/build/compose/binaries/main/
+            install-deps: |
+              sudo apt-get update
+              sudo apt-get install -y fakeroot dpkg-dev rpm
+          - os: macos-latest
+            target: macos
+            task: :composeApp:packageDmg
+            artifact-path: composeApp/build/compose/binaries/main/dmg/
+            install-deps: ""
+          - os: windows-latest
+            target: windows
+            task: :composeApp:packageMsi
+            artifact-path: composeApp/build/compose/binaries/main/msi/
+            install-deps: ""
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: Grant execute permission for gradlew
+      if: runner.os != 'Windows'
+      run: chmod +x gradlew
+
+    - name: Install packaging dependencies
+      if: matrix.install-deps != ''
+      run: ${{ matrix.install-deps }}
+
+    - name: Build desktop packages
+      run: ./gradlew ${{ matrix.task }}
+
+    - name: Upload installers
+      uses: actions/upload-artifact@v4
+      with:
+        name: KryptaKeep-${{ matrix.target }}
+        path: ${{ matrix.artifact-path }}
+        if-no-files-found: error

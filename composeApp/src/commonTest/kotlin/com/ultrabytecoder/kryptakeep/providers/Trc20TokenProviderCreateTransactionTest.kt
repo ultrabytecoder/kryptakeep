@@ -12,6 +12,7 @@ import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.HttpHeaders
+import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -38,14 +39,15 @@ class Trc20TokenProviderCreateTransactionTest {
     }
 
     private fun createMockFactory(): () -> HttpClient {
-        val responses = listOf(DECIMALS_RESPONSE, TRANSFER_RESPONSE)
-        var index = 0
         return {
             HttpClient(MockEngine) {
                 engine {
-                    addHandler {
-                        val response = responses[index % responses.size]
-                        index++
+                    addHandler { request ->
+                        val bodyText = (request.body as? TextContent)?.text ?: ""
+                        val response = when {
+                            bodyText.contains("decimals()") -> DECIMALS_RESPONSE
+                            else -> TRANSFER_RESPONSE
+                        }
                         respond(
                             content = response,
                             status = HttpStatusCode.OK,
@@ -58,14 +60,15 @@ class Trc20TokenProviderCreateTransactionTest {
     }
 
     private fun createErrorFactory(): () -> HttpClient {
-        val responses = listOf(DECIMALS_RESPONSE, """{"Error":"contract validate error"}""")
-        var index = 0
         return {
             HttpClient(MockEngine) {
                 engine {
-                    addHandler {
-                        val response = responses[index % responses.size]
-                        index++
+                    addHandler { request ->
+                        val bodyText = (request.body as? TextContent)?.text ?: ""
+                        val response = when {
+                            bodyText.contains("decimals()") -> DECIMALS_RESPONSE
+                            else -> """{"Error":"contract validate error"}"""
+                        }
                         respond(
                             content = response,
                             status = HttpStatusCode.OK,
@@ -79,8 +82,8 @@ class Trc20TokenProviderCreateTransactionTest {
 
     private fun createProvider(createClient: () -> HttpClient = createMockFactory()): Trc20TokenProvider {
         val masterKey = DeterministicWallet.generate(Hex.decode(SEED_HEX))
-        val account = AccountInfo(ACCOUNT_ID, 1, "Test", "0", AccountType.Trx, "TRX", null, 0)
-        val destAccount = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Trx, "TRX", null, 1)
+        val account = AccountInfo(ACCOUNT_ID, 1, "Test", "0", AccountType.Trx, "TRX", null, 0, "m/44'/195'/0'/0/0")
+        val destAccount = AccountInfo(DEST_ACCOUNT_ID, 1, "Dest", "0", AccountType.Trx, "TRX", null, 1, "m/44'/195'/1'/0/0")
         return Trc20TokenProvider(
             masterKey, FakeAccountRepository(mapOf(ACCOUNT_ID to account, DEST_ACCOUNT_ID to destAccount)),
             JsonObject(mapOf("tokenAddress" to JsonPrimitive(CONTRACT_ADDRESS))),

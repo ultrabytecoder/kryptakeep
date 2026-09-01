@@ -109,7 +109,8 @@ class TonProviderSyncTest {
 
     private fun testAccount(index: Long = 0) = AccountInfo(
         id = ACCOUNT_ID, walletId = 1, name = "Test", amount = "0",
-        type = AccountType.Ton, symbol = "TON", address = null, derivationIndex = index
+        type = AccountType.Ton(), symbol = "TON", address = null, accountIndex = index,
+        derivationPath = "m/44'/607'/$index'"
     )
 
     private fun createMockClientFactory(

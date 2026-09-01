@@ -24,11 +24,13 @@ class SyncAccountUseCase(
         try {
             val account = accountRepository.getAccount(accountId)
                 ?: throw IllegalArgumentException("Account not found: $accountId")
-            val provider = ProviderFactory.create(
-                account.type, keyProvider, account.walletId, utxoRepository, accountRepository,
-                transactionRepository, networkConfig, account.params
-            )
-            provider.sync(accountId, syncMode)
+            keyProvider.withMasterSeed(account.walletId) { masterSeed ->
+                val provider = ProviderFactory.create(
+                    account.type, masterSeed, utxoRepository, accountRepository,
+                    transactionRepository, networkConfig, account.params
+                )
+                provider.sync(accountId, syncMode)
+            }
         } catch (e: Exception) {
             println("Sync failed for account $accountId: ${e.message}")
         } finally {

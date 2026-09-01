@@ -91,7 +91,8 @@ class Erc20TokenProviderSyncTest {
 
     private fun testAccount(index: Long = 0) = AccountInfo(
         id = ACCOUNT_ID, walletId = 1, name = "Test", amount = "0",
-        type = AccountType.Erc20(CONTRACT_ADDRESS), symbol = "USDC", address = null, derivationIndex = index
+        type = AccountType.Erc20(CONTRACT_ADDRESS), symbol = "USDC", address = null, accountIndex = index,
+        derivationPath = "m/44'/60'/$index'/0/0"
     )
 
     private fun createMockClientFactory(

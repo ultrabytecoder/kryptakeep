@@ -3,47 +3,309 @@ package com.ultrabytecoder.kryptakeep.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
+import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
+import com.ultrabytecoder.kryptakeep.domain.model.AccountType
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
+import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
+import com.ultrabytecoder.kryptakeep.domain.model.FeeValidator
+import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
+import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
+import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
+import com.ultrabytecoder.kryptakeep.domain.service.KeyProvider
 import com.ultrabytecoder.kryptakeep.domain.usecase.EstimateFeeUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.GetAccountsUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SendUseCase
 import com.ultrabytecoder.kryptakeep.domain.usecase.SyncAccountUseCase
+import com.ultrabytecoder.kryptakeep.providers.ProviderFactory
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
+sealed class FeeSelectionMode {
+    data object Auto : FeeSelectionMode()
+    data object Conservative : FeeSelectionMode()
+    data object Balanced : FeeSelectionMode()
+    data object Generous : FeeSelectionMode()
+    data object Custom : FeeSelectionMode()
+
+    fun name(): String = when (this) {
+        is Auto -> "auto"
+        is Conservative -> "conservative"
+        is Balanced -> "balanced"
+        is Generous -> "generous"
+        is Custom -> "custom"
+    }
+
+    companion object {
+        fun fromName(name: String): FeeSelectionMode = when (name) {
+            // Backward-compat: map old persisted speed-tier names
+            "slow" -> Conservative
+            "medium" -> Balanced
+            "fast" -> Generous
+            "conservative" -> Conservative
+            "balanced" -> Balanced
+            "generous" -> Generous
+            "custom" -> Custom
+            else -> Auto
+        }
+    }
+}
+
+private object FeePreferenceKeys {
+    const val MODE_PREFIX = "fee_mode_"
+    const val BTC_RATE_PREFIX = "fee_custom_btc_rate_"     // Append accountId
+    const val ETH_PRIORITY_PREFIX = "fee_custom_eth_priority_v2_"   // mGwei
+    const val ETH_MAX_PREFIX = "fee_custom_eth_max_v2_"             // mGwei
+    const val TRC20_LIMIT_PREFIX = "fee_custom_trc20_limit_"
+}
 
 class SendViewModel(
     private val accountId: String,
     private val getAccounts: GetAccountsUseCase,
     private val send: SendUseCase,
     private val estimateFeeUseCase: EstimateFeeUseCase,
-    private val syncAccount: SyncAccountUseCase
+    private val syncAccount: SyncAccountUseCase,
+    private val accountRepository: AccountRepository,
+    private val utxoRepository: UtxoRepository,
+    private val transactionRepository: TransactionRepository,
+    private val keyProvider: KeyProvider,
+    private val networkConfig: NetworkConfig,
+    private val settingsStorage: SettingsStorage
 ) : ViewModel() {
     private val _account = MutableStateFlow<AccountInfo?>(null)
     val account: StateFlow<AccountInfo?> = _account.asStateFlow()
 
-    private val _fee = MutableStateFlow<BigDecimal?>(null)
-    val fee: StateFlow<BigDecimal?> = _fee.asStateFlow()
+    private val _fee = MutableStateFlow<FeeEstimation?>(null)
+    val fee: StateFlow<FeeEstimation?> = _fee.asStateFlow()
+
+    private val _feeError = MutableStateFlow<String?>(null)
+    val feeError: StateFlow<String?> = _feeError.asStateFlow()
+
+    private val _feePresets = MutableStateFlow<FeePresets?>(null)
+    val feePresets: StateFlow<FeePresets?> = _feePresets.asStateFlow()
+
+    private val _selectedFeeMode = MutableStateFlow<FeeSelectionMode>(FeeSelectionMode.Auto)
+    val selectedFeeMode: StateFlow<FeeSelectionMode> = _selectedFeeMode.asStateFlow()
+
+    // Custom fee inputs
+    private val _customBtcFeeRate = MutableStateFlow(10L)
+    val customBtcFeeRate: StateFlow<Long> = _customBtcFeeRate.asStateFlow()
+
+    private val _customEthPriorityFee = MutableStateFlow(25_000L)
+    val customEthPriorityFee: StateFlow<Long> = _customEthPriorityFee.asStateFlow()
+
+    private val _customEthMaxFee = MutableStateFlow(35_000L)
+    val customEthMaxFee: StateFlow<Long> = _customEthMaxFee.asStateFlow()
+
+    private val _customTrc20FeeLimit = MutableStateFlow(35_000_000L)
+    val customTrc20FeeLimit: StateFlow<Long> = _customTrc20FeeLimit.asStateFlow()
+
+    private val _validationError = MutableStateFlow<String?>(null)
+    val validationError: StateFlow<String?> = _validationError.asStateFlow()
 
     init {
+        // Load saved fee preferences
+        val savedMode = settingsStorage.getString(FeePreferenceKeys.MODE_PREFIX + accountId)
+        _selectedFeeMode.value = FeeSelectionMode.fromName(savedMode ?: "auto")
+        _customBtcFeeRate.value = (settingsStorage.getString(FeePreferenceKeys.BTC_RATE_PREFIX + accountId) ?: "10").toLongOrNull() ?: 10L
+        _customEthPriorityFee.value = (settingsStorage.getString(FeePreferenceKeys.ETH_PRIORITY_PREFIX + accountId) ?: "25000").toLongOrNull() ?: 25_000L
+        _customEthMaxFee.value = (settingsStorage.getString(FeePreferenceKeys.ETH_MAX_PREFIX + accountId) ?: "35000").toLongOrNull() ?: 35_000L
+        _customTrc20FeeLimit.value = (settingsStorage.getString(FeePreferenceKeys.TRC20_LIMIT_PREFIX + accountId) ?: "35000000").toLongOrNull() ?: 35_000_000L
+
         viewModelScope.launch {
             _account.value = getAccounts.byId(accountId)
-        }
-    }
-
-    fun estimateFee(amount: BigDecimal) {
-        viewModelScope.launch {
-            try {
-                _fee.value = estimateFeeUseCase(accountId, amount)
-            } catch (_: Exception) {
-                _fee.value = null
+            _account.value?.let { acc ->
+                try {
+                    keyProvider.withMasterSeed(acc.walletId) { masterSeed ->
+                        val provider = ProviderFactory.create(
+                            acc.type, masterSeed,
+                            utxoRepository, accountRepository, transactionRepository,
+                            networkConfig, acc.params
+                        )
+                        _feePresets.value = provider.feePresets(acc.id)
+                    }
+                } catch (e: Exception) {
+                    // Preset loading failed (e.g. RPC error) — surface it instead of hiding the selector silently.
+                    _feeError.value = "Fee presets could not be loaded: ${e.message ?: "network error"}"
+                }
+                if (_feePresets.value == null && _selectedFeeMode.value !is FeeSelectionMode.Auto) {
+                    _selectedFeeMode.value = FeeSelectionMode.Auto
+                    settingsStorage.putString(
+                        FeePreferenceKeys.MODE_PREFIX + accountId,
+                        FeeSelectionMode.Auto.name()
+                    )
+                }
             }
         }
     }
 
+    fun setSelectedFeeMode(mode: FeeSelectionMode) {
+        _selectedFeeMode.value = mode
+        _validationError.value = null
+        settingsStorage.putString(FeePreferenceKeys.MODE_PREFIX + accountId, mode.name())
+    }
+
+    /**
+     * Copy the values from [params] into the custom-fee state flows *without*
+     * persisting to settings storage. Used to pre-fill the editable fields
+     * when a preset / Auto chip is selected.
+     */
+    fun syncCustomFieldsFromParams(params: CustomFeeParams) {
+        when (params) {
+            is CustomFeeParams.Btc -> _customBtcFeeRate.value = params.feeRateSatVb
+            is CustomFeeParams.Eth -> {
+                _customEthPriorityFee.value = params.maxPriorityFeePerGasMilliGwei
+                _customEthMaxFee.value = params.maxFeePerGasMilliGwei
+            }
+            is CustomFeeParams.Tron -> _customTrc20FeeLimit.value = params.feeLimitSun
+        }
+    }
+
+    fun setCustomBtcFeeRate(rate: Long) {
+        _customBtcFeeRate.value = rate
+        settingsStorage.putString(FeePreferenceKeys.BTC_RATE_PREFIX + accountId, rate.toString())
+    }
+
+    fun setCustomEthFees(priorityFee: Long, maxFee: Long) {
+        _customEthPriorityFee.value = priorityFee
+        _customEthMaxFee.value = maxFee
+        settingsStorage.putString(FeePreferenceKeys.ETH_PRIORITY_PREFIX + accountId, priorityFee.toString())
+        settingsStorage.putString(FeePreferenceKeys.ETH_MAX_PREFIX + accountId, maxFee.toString())
+    }
+
+    fun setCustomTrc20FeeLimit(limit: Long) {
+        _customTrc20FeeLimit.value = limit
+        settingsStorage.putString(FeePreferenceKeys.TRC20_LIMIT_PREFIX + accountId, limit.toString())
+    }
+
+    fun validateCustomFee(): Boolean {
+        val accountType = _account.value?.type ?: return true
+        val parentChain = accountType.parentChain() ?: accountType
+
+        return when (parentChain) {
+            is AccountType.Btc -> {
+                val rate = _customBtcFeeRate.value
+                if (FeeValidator.validateBtcFeeRate(rate)) {
+                    _validationError.value = null
+                    true
+                } else {
+                    _validationError.value = "BTC fee rate must be between 1 and 2000 sat/vB"
+                    false
+                }
+            }
+            is AccountType.Eth -> {
+                val p = _customEthPriorityFee.value
+                val m = _customEthMaxFee.value
+                if (FeeValidator.validateEthFeeParams(p, m)) {
+                    _validationError.value = null
+                    true
+                } else {
+                    val parts = mutableListOf<String>()
+                    if (!FeeValidator.validateEthPriorityFee(p)) parts.add("priority fee: 0.001–1000 Gwei")
+                    if (!FeeValidator.validateEthMaxFee(m)) parts.add("max fee: 0.001–10000 Gwei")
+                    if (m < p) parts.add("max fee must be >= priority fee")
+                    _validationError.value = "Valid ranges — " + parts.joinToString(", ")
+                    false
+                }
+            }
+            is AccountType.Trx -> {
+                val limit = _customTrc20FeeLimit.value
+                if (FeeValidator.validateTrc20FeeLimit(limit)) {
+                    _validationError.value = null
+                    true
+                } else {
+                    _validationError.value = "TRC-20 fee limit must be between 1 and 100 TRX"
+                    false
+                }
+            }
+            else -> {
+                _validationError.value = null
+                true
+            }
+        }
+    }
+
+    private fun buildFeeParams(): CustomFeeParams? {
+        val mode = _selectedFeeMode.value
+        val presets = _feePresets.value
+        val accountType = _account.value?.type ?: return null
+        val parentChain = accountType.parentChain() ?: accountType
+
+        return when (mode) {
+            is FeeSelectionMode.Auto -> null
+            is FeeSelectionMode.Conservative -> presets?.slow
+            is FeeSelectionMode.Balanced -> presets?.medium
+            is FeeSelectionMode.Generous -> presets?.fast
+            is FeeSelectionMode.Custom -> when (parentChain) {
+                is AccountType.Btc -> CustomFeeParams.Btc(_customBtcFeeRate.value)
+                is AccountType.Eth -> CustomFeeParams.Eth(
+                    _customEthPriorityFee.value,
+                    _customEthMaxFee.value
+                )
+                is AccountType.Trx -> {
+                    // Native TRX has no presets and rejects custom fees.
+                    if (presets == null) null
+                    else CustomFeeParams.Tron(_customTrc20FeeLimit.value)
+                }
+                else -> null
+            }
+        }
+    }
+
+    /** Returns true if this account type supports fee selection (has presets). */
+    fun supportsFeeSelection(): Boolean {
+        val accountType = _account.value?.type ?: return false
+        val parentChain = accountType.parentChain() ?: accountType
+        return (parentChain is AccountType.Btc ||
+            parentChain is AccountType.Eth ||
+            parentChain is AccountType.Trx) &&
+            _feePresets.value != null
+    }
+
+    /**
+     * Whether to render the fee section at all — includes native TRX, which
+     * has no presets but should show a disabled Auto indicator.
+     */
+    fun showFeeSection(): Boolean {
+        val accountType = _account.value?.type ?: return false
+        val parentChain = accountType.parentChain() ?: accountType
+        return parentChain is AccountType.Btc ||
+            parentChain is AccountType.Eth ||
+            parentChain is AccountType.Trx
+    }
+
+    fun estimateFee(amount: BigDecimal, recipientAddress: String? = null) {
+        viewModelScope.launch {
+            try {
+                _feeError.value = null
+                _fee.value = estimateFeeUseCase(accountId, amount, recipientAddress, buildFeeParams())
+            } catch (e: IllegalArgumentException) {
+                _fee.value = null
+                _feeError.value = "Fee estimation failed: ${e.message ?: "invalid parameter"}"
+            } catch (e: IllegalStateException) {
+                _fee.value = null
+                _feeError.value = e.message ?: "Fee estimation failed"
+            } catch (e: Exception) {
+                _fee.value = null
+                _feeError.value = "Fee estimation failed: ${e.message ?: "network error"}"
+            }
+        }
+    }
+
+    fun clearFee() {
+        _fee.value = null
+        _feeError.value = null
+    }
+
     suspend fun sendTransaction(address: String, amount: BigDecimal): String {
-        val txid = send(accountId, address, amount)
+        if (_selectedFeeMode.value is FeeSelectionMode.Custom && !validateCustomFee()) {
+            throw IllegalStateException("Invalid custom fee: ${_validationError.value}")
+        }
+        val txid = send(accountId, address, amount, buildFeeParams())
         viewModelScope.launch { syncAccount(accountId) }
         return txid
     }

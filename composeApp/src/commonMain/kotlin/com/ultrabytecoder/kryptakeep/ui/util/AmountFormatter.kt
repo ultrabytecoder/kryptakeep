@@ -22,6 +22,7 @@ fun formatAmount(rawAmount: String, accountType: AccountType, chainData: String?
         is AccountType.Trx -> formatNative(rawAmount, TRX_DECIMALS, "TRX")
         is AccountType.Erc20 -> formatToken(rawAmount, chainData)
         is AccountType.Trc20 -> formatToken(rawAmount, chainData)
+        is AccountType.TonToken -> formatToken(rawAmount, chainData)
     }
 }
 

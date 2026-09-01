@@ -1,6 +1,9 @@
 package com.ultrabytecoder.kryptakeep.providers
 
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
+import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
+import com.ultrabytecoder.kryptakeep.providers.DerivationPathResolver
 import fr.acinq.bitcoin.Crypto
 import fr.acinq.bitcoin.DeterministicWallet
 import fr.acinq.bitcoin.PublicKey
@@ -16,21 +19,69 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+/**
+ * Result of an EIP-1559 fee computation. [usedFallback] is `true` when the
+ * live `eth_maxPriorityFeePerGas` / `eth_getBlockByNumber` fetch failed and
+ * the values were approximated from legacy `eth_gasPrice` instead.
+ */
+data class ComputedFeeParams(
+    val tipCap: Long,
+    val feeCap: Long,
+    val usedFallback: Boolean
+)
+
+/**
+ * Round wei to nearest milli-Gwei (1 mGwei = 1e6 wei). Overflow-safe for any
+ * positive Long (division happens before rounding).
+ */
+fun Long.weiToMilliGwei(): Long =
+    this / 1_000_000L + if (this % 1_000_000L >= 500_000L) 1L else 0L
+
+/**
+ * Build auto/slow/medium/fast presets from live network fee values (wei).
+ * Multipliers are applied in the milli-Gwei domain, keeping values well
+ * within Long range (no overflow risk from e.g. tipCap * 150).
+ */
+fun computeFeePresets(tipCap: Long, feeCap: Long): FeePresets {
+    val autoTip = tipCap.weiToMilliGwei().coerceAtLeast(1L)
+    val autoCap = feeCap.weiToMilliGwei().coerceAtLeast(autoTip + 1L)
+
+    val slowTip = (autoTip * 70 / 100).coerceAtLeast(1L)
+    val slowCap = (autoCap * 85 / 100).coerceAtLeast(slowTip + 1L)
+
+    val fastTip = (autoTip * 150 / 100).coerceAtLeast(autoTip + 1L)
+    val fastCap = (autoCap * 150 / 100).coerceAtLeast(fastTip + 1L)
+
+    return FeePresets(
+        auto = CustomFeeParams.Eth(autoTip, autoCap),
+        slow = CustomFeeParams.Eth(slowTip, slowCap),
+        medium = CustomFeeParams.Eth(autoTip, autoCap),
+        fast = CustomFeeParams.Eth(fastTip, fastCap)
+    )
+}
+
 abstract class EthBase(
     protected val masterKey: DeterministicWallet.ExtendedPrivateKey,
     protected val networkConfig: NetworkConfig
 ) {
 
-    protected fun deriveEthKey(index: Long): DeterministicWallet.ExtendedPrivateKey {
+    protected fun deriveEthKey(accountIndex: Long): DeterministicWallet.ExtendedPrivateKey {
         return masterKey.derivePrivateKey(
             listOf(
                 DeterministicWallet.hardened(44),
                 DeterministicWallet.hardened(60),
-                DeterministicWallet.hardened(0),
+                DeterministicWallet.hardened(accountIndex),
                 0L,
-                index
+                0L
             )
         )
+    }
+
+    protected fun deriveEthKeyFromPath(path: String): DeterministicWallet.ExtendedPrivateKey {
+        val segments = DerivationPathResolver.parsePath(path).map { (index, hardened) ->
+            if (hardened) DeterministicWallet.hardened(index) else index
+        }
+        return masterKey.derivePrivateKey(segments)
     }
 
     protected fun ethAddressFromPublicKey(key: DeterministicWallet.ExtendedPrivateKey): String {
@@ -97,8 +148,32 @@ abstract class EthBase(
         }
         val body = response.body<String>()
         val json = Json.parseToJsonElement(body).jsonObject
-        if (json.containsKey("error")) return 0L
+        if (json.containsKey("error")) {
+            val msg = json["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
+            throw IllegalStateException("eth_estimateGas failed: ${msg ?: "unknown error"}")
+        }
         return json["result"]!!.jsonPrimitive.content.removePrefix("0x").toLong(16)
+    }
+
+    /**
+     * Compute EIP-1559 fee parameters with a 25% safety margin on baseFee.
+     * Falls back to [ethGasPrice] if eth_maxPriorityFeePerGas or eth_getBlockByNumber fail.
+     */
+    protected suspend fun computeFeeParams(client: HttpClient): ComputedFeeParams {
+        return try {
+            val gasTipCap = ethMaxPriorityFeePerGas(client)
+            val baseFee = ethBaseFee(client)
+            // Ceiling division to avoid losing precision from integer truncation
+            val marginNum = NetworkConfig.ETH_BASE_FEE_MARGIN_NUMERATOR.toLong()
+            val marginDen = NetworkConfig.ETH_BASE_FEE_MARGIN_DENOMINATOR.toLong()
+            val gasFeeCap = (baseFee * marginNum + marginDen - 1) / marginDen + gasTipCap
+            ComputedFeeParams(gasTipCap, gasFeeCap, usedFallback = false)
+        } catch (e: Exception) {
+            // Fallback to legacy eth_gasPrice
+            val gasPrice = ethGasPrice(client)
+            val tipCap = gasPrice / 2
+            ComputedFeeParams(tipCap, gasPrice, usedFallback = true)
+        }
     }
 
     protected suspend fun ethSendRawTransaction(client: HttpClient, rawTx: String): String {

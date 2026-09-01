@@ -2,7 +2,7 @@ CREATE TABLE wallets (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     name TEXT NOT NULL,
     master_seed BLOB NOT NULL,
-    encrypted_mnemonic BLOB
+    mnemonic BLOB
 );
 
 selectAllWallets:
@@ -12,7 +12,7 @@ selectWalletById:
 SELECT * FROM wallets WHERE id = ?;
 
 insertWallet:
-INSERT OR REPLACE INTO wallets(id, name, master_seed, encrypted_mnemonic)
+INSERT OR REPLACE INTO wallets(id, name, master_seed, mnemonic)
 VALUES (?, ?, ?, ?);
 
 lastInsertRowId:
@@ -24,11 +24,14 @@ DELETE FROM wallets WHERE id = ?;
 deleteAllWallets:
 DELETE FROM wallets;
 
-selectEncryptedMnemonicById:
-SELECT encrypted_mnemonic FROM wallets WHERE id = ?;
-
 renameWallet:
 UPDATE wallets SET name = ? WHERE id = ?;
+
+updateMnemonic:
+UPDATE wallets SET mnemonic = ? WHERE id = ?;
+
+updateMasterSeed:
+UPDATE wallets SET master_seed = ? WHERE id = ?;
 
 CREATE TABLE accounts (
     id TEXT PRIMARY KEY NOT NULL,
@@ -37,11 +40,17 @@ CREATE TABLE accounts (
     amount TEXT NOT NULL,
     type TEXT NOT NULL,
     address TEXT,
-    derivation_index INTEGER NOT NULL,
+    account_index INTEGER,
+    derivation_path TEXT NOT NULL,
     params TEXT,
     symbol TEXT NOT NULL,
-    FOREIGN KEY (wallet_id) REFERENCES wallets(id)
+    parent_account_id TEXT,
+    token_address TEXT,
+    FOREIGN KEY (wallet_id) REFERENCES wallets(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
+
+CREATE INDEX idx_accounts_parent ON accounts(parent_account_id);
 
 selectAll:
 SELECT * FROM accounts;
@@ -53,11 +62,30 @@ selectByWalletId:
 SELECT * FROM accounts WHERE wallet_id = ?;
 
 maxDerivationIndexByWalletAndAccountType:
-SELECT MAX(derivation_index) AS max_index FROM accounts WHERE wallet_id = ? AND type = ?;
+SELECT MAX(account_index) AS max_index FROM accounts WHERE wallet_id = ? AND type = ? AND parent_account_id IS NULL;
+
+selectNativeAccountsByWalletId:
+SELECT * FROM accounts WHERE wallet_id = ? AND parent_account_id IS NULL;
+
+selectNativeAccountsByWalletAndType:
+SELECT * FROM accounts WHERE wallet_id = ? AND type = ? AND parent_account_id IS NULL
+ORDER BY account_index ASC;
+
+selectTokensByParentId:
+SELECT * FROM accounts WHERE parent_account_id = ?;
+
+existsTokenForParent:
+SELECT EXISTS(SELECT 1 FROM accounts WHERE parent_account_id = ? AND token_address = ?);
+
+countTokensByParent:
+SELECT COUNT(*) AS cnt FROM accounts WHERE parent_account_id = ?;
+
+existsByDerivationPath:
+SELECT EXISTS(SELECT 1 FROM accounts WHERE wallet_id = ? AND derivation_path = ?);
 
 insert:
-INSERT OR REPLACE INTO accounts(id, wallet_id, name, amount, type, address, derivation_index, params, symbol)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO accounts(id, wallet_id, name, amount, type, address, account_index, derivation_path, params, symbol, parent_account_id, token_address)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 updateAmount:
 UPDATE accounts SET amount = ? WHERE id = ?;
@@ -67,6 +95,9 @@ UPDATE accounts SET params = ? WHERE id = ?;
 
 deleteById:
 DELETE FROM accounts WHERE id = ?;
+
+deleteTokensByParentId:
+DELETE FROM accounts WHERE parent_account_id = ?;
 
 deleteAll:
 DELETE FROM accounts;
@@ -81,7 +112,7 @@ CREATE TABLE utxos (
     amount          INTEGER NOT NULL,
     txid            TEXT NOT NULL,
     vout            INTEGER NOT NULL,
-    FOREIGN KEY (account_id) REFERENCES accounts(id)
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
 
 selectAllUtxos:
@@ -115,7 +146,7 @@ CREATE TABLE transactions (
     counterparty_address TEXT,
     block_height INTEGER,
     chain_data TEXT,
-    FOREIGN KEY (account_id) REFERENCES accounts(id)
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX idx_transactions_tx_hash_account_id ON transactions(tx_hash, account_id);

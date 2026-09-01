@@ -1,6 +1,7 @@
 package com.ultrabytecoder.kryptakeep.providers.ton
 
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.providers.DerivationPathResolver
 import com.ultrabytecoder.kryptakeep.providers.ton.boc.*
 import com.ultrabytecoder.kryptakeep.providers.ton.wallet.WalletContract
 import com.ultrabytecoder.kryptakeep.providers.ton.wallet.WalletContractV3R2
@@ -19,6 +20,9 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.utils.io.core.toByteArray
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 enum class TonWalletVersion {
     V3R1, V3R2, V4R1, V4R2
@@ -32,10 +36,32 @@ abstract class TonBase(
         internal const val TON_WORKCHAIN = 0
         internal const val TON_COIN_TYPE = 607
         internal const val DEFAULT_WALLET_ID = 698983191
+        internal const val PARAMS_KEY_WALLET_VERSION = "walletVersion"
 
         private val provider = CryptographyProvider.Default
         private val sha256Hasher = provider.get(SHA256).hasher()
         private val sha512Hasher = provider.get(SHA512).hasher()
+
+        /** Parse wallet version from account params; defaults to V3R2. */
+        fun parseWalletVersion(params: JsonObject): TonWalletVersion {
+            val raw = params[PARAMS_KEY_WALLET_VERSION]?.jsonPrimitive?.content
+                ?: TonWalletVersion.V3R2.name
+            return TonWalletVersion.entries.find { it.name == raw }
+                ?: TonWalletVersion.V3R2
+        }
+
+        /** Resolve a WalletContract instance for the given version. */
+        fun walletContractFor(
+            version: TonWalletVersion,
+            workchain: Int,
+            publicKey: ByteArray,
+            walletId: Int? = null
+        ): WalletContract = when (version) {
+            TonWalletVersion.V3R1, TonWalletVersion.V3R2 ->
+                WalletContractV3R2.create(workchain, publicKey, walletId)
+            TonWalletVersion.V4R1, TonWalletVersion.V4R2 ->
+                WalletContractV4.create(workchain, publicKey, walletId)
+        }
     }
 
     data class Ed25519KeyPair(val privateKey: Ed25519PrivateKey, val publicKey: ByteArray, val privateKeySeed: ByteArray)
@@ -47,6 +73,23 @@ abstract class TonBase(
             hardenedIdx(TON_COIN_TYPE),
             hardenedIdx(index.toInt()),
         ))
+        val privateKeySeed = key.copyOfRange(0, 32)
+        val privateKey = Ed25519.keyFromSeed(privateKeySeed)
+        val publicKeyBytes = privateKey.publicKey().toByteArray()
+        return Ed25519KeyPair(
+            privateKey = privateKey,
+            publicKey = publicKeyBytes,
+            privateKeySeed = privateKeySeed,
+        )
+    }
+
+    protected fun deriveTonKeyFromPath(path: String): Ed25519KeyPair {
+        val segments = DerivationPathResolver.parsePath(path)
+        val slip10Indices = segments.map { (index, _) ->
+            hardenedIdx(index.toInt())
+        }
+        val master = hmacSha512("ed25519 seed".toByteArray(), masterSeed)
+        val key = deriveSlip10Path(master, slip10Indices)
         val privateKeySeed = key.copyOfRange(0, 32)
         val privateKey = Ed25519.keyFromSeed(privateKeySeed)
         val publicKeyBytes = privateKey.publicKey().toByteArray()
