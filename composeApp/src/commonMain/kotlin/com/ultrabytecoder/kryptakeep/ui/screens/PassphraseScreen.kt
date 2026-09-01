@@ -1,43 +1,35 @@
 package com.ultrabytecoder.kryptakeep.ui.screens
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import com.ultrabytecoder.kryptakeep.security.SecureMnemonicCode
-import com.ultrabytecoder.kryptakeep.security.wipe
-import org.kotlincrypto.random.CryptoRand
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.ArrowLeft
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
 import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CreateWalletViewModel
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CreateWalletScreen(
-    onWalletCreated: (walletId: Long) -> Unit,
-    viewModel: CreateWalletViewModel
+fun PassphraseScreen(
+    viewModel: CreateWalletViewModel,
+    onBack: () -> Unit,
+    onNext: () -> Unit
 ) {
-    var walletName by remember { mutableStateOf("") }
-    // Secrets live in wipe-able CharArray-backed state holders instead of raw
-    // immutable Strings (NEW-11): the buffers are zeroed when the screen leaves
-    // composition or once the wallet was created.
-    val mnemonicState = remember { SecureTextFieldState() }
-    var mnemonicError by remember { mutableStateOf<String?>(null) }
+    // Seeded from the ViewModel so a back-navigation (e.g. to redraw the
+    // gesture) cannot reset the choice and silently drop a configured
+    // passphrase.
+    var usePassphrase by remember { mutableStateOf(viewModel.hasPassphrase) }
     var passphraseError by remember { mutableStateOf<String?>(null) }
-
-    var usePassphrase by remember { mutableStateOf(false) }
     val passphraseState = remember { SecureTextFieldState() }
     var passphraseVisible by remember { mutableStateOf(false) }
     val passphraseConfirmState = remember { SecureTextFieldState() }
@@ -45,18 +37,20 @@ fun CreateWalletScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            mnemonicState.wipe()
             passphraseState.wipe()
             passphraseConfirmState.wipe()
         }
     }
 
-    val scope = rememberCoroutineScope()
-
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Create Wallet") }
+                title = { Text("Passphrase") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(FeatherIcons.ArrowLeft, contentDescription = "Back")
+                    }
+                }
             )
         }
     ) { paddingValues ->
@@ -67,87 +61,30 @@ fun CreateWalletScreen(
                 .padding(16.dp)
         ) {
             Text(
-                "Set up your wallet",
+                "Do you want to add an additional layer of protection using a passphrase?",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Medium
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                "Enter a name and your recovery mnemonic",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-
-            OutlinedTextField(
-                value = walletName,
-                onValueChange = { walletName = it },
-                label = { Text("Wallet name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            )
-
             Spacer(modifier = Modifier.height(16.dp))
 
-            OutlinedTextField(
-                value = mnemonicState.text,
-                onValueChange = {
-                    mnemonicState.update(it)
-                    mnemonicError = null
-                },
-                label = { Text("Mnemonic") },
-                isError = mnemonicError != null,
-                supportingText = mnemonicError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
-                minLines = 3,
-                maxLines = 5,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
+            SegmentedSingleChoice(
+                options = listOf(
+                    false to "No, skip",
+                    true to "Yes, add passphrase"
+                ),
+                selected = usePassphrase,
+                onSelected = {
+                    usePassphrase = it
+                    if (!it) {
+                        passphraseState.wipe()
+                        passphraseConfirmState.wipe()
+                        passphraseError = null
+                    }
+                }
             )
-
-            TextButton(
-                onClick = {
-                    val entropy = CryptoRand.Default.nextBytes(ByteArray(32))
-                    val mnemonic = SecureMnemonicCode.generate(entropy)
-                    entropy.wipe()
-                    try {
-                        mnemonicState.update(mnemonic.concatToString())
-                    } finally {
-                        // The CharArray is no longer needed once the immutable String
-                        // copy is in the text field — wipe it so the mnemonic does not
-                        // linger in a mutable buffer until GC.
-                        mnemonic.wipe()
-                    }
-                    mnemonicError = null
-                },
-                modifier = Modifier.align(Alignment.End)
-            ) {
-                Text("Generate new")
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        usePassphrase = !usePassphrase
-                        if (!usePassphrase) {
-                            passphraseState.wipe()
-                            passphraseConfirmState.wipe()
-                            passphraseError = null
-                        }
-                    }
-            ) {
-                Checkbox(
-                    checked = usePassphrase,
-                    onCheckedChange = null
-                )
-                Text("Use a passphrase (advanced, optional)")
-            }
 
             if (usePassphrase) {
+                Spacer(modifier = Modifier.height(16.dp))
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer
@@ -229,44 +166,67 @@ fun CreateWalletScreen(
 
             Button(
                 onClick = {
-                    mnemonicError = null
-                    passphraseError = null
-
-                    if (usePassphrase && passphraseState.text != passphraseConfirmState.text) {
-                        passphraseError = "Passphrases do not match"
-                        return@Button
-                    }
-
-                    val mnemonicChars = mnemonicState.trimmedCopy()
-                    val passphraseChars = if (usePassphrase) passphraseState.toCharArray() else CharArray(0)
-
-                    scope.launch {
-                        // Secrets are handed to the ViewModel as wipe-able CharArrays;
-                        // the ViewModel wipes them once the use case consumed them.
-                        when (val result = viewModel.createWallet(
-                            name = walletName.trim(),
-                            mnemonic = mnemonicChars,
-                            passphrase = passphraseChars
-                        )) {
-                            is CreateWalletViewModel.Result.Success -> {
-                                mnemonicState.wipe()
-                                passphraseState.wipe()
-                                passphraseConfirmState.wipe()
-                                onWalletCreated(result.walletId)
-                            }
-                            is CreateWalletViewModel.Result.Error -> {
-                                mnemonicError = result.message
-                            }
+                    if (usePassphrase) {
+                        if (passphraseState.text != passphraseConfirmState.text) {
+                            passphraseError = "Passphrases do not match"
+                            return@Button
                         }
+                        if (passphraseState.text.isBlank()) {
+                            passphraseError = "Passphrase cannot be empty"
+                            return@Button
+                        }
+                        passphraseError = null
+                        viewModel.setPassphrase(passphraseState.toCharArray())
+                    } else {
+                        viewModel.setPassphrase(CharArray(0))
                     }
+                    onNext()
                 },
-                enabled = walletName.isNotBlank()
-                    && mnemonicState.text.isNotBlank()
-                    && (!usePassphrase || passphraseState.text.isNotBlank()),
+                enabled = !usePassphrase || passphraseState.text.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Create Wallet")
+                Text("Continue")
+            }
+        }
+    }
+}
+
+@Composable
+private fun <T> SegmentedSingleChoice(
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelected: (T) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        options.forEach { (value, label) ->
+            val isSelected = value == selected
+            Surface(
+                onClick = { onSelected(value) },
+                shape = RoundedCornerShape(12.dp),
+                color = if (isSelected) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                contentColor = if (isSelected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 10.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
             }
         }
     }

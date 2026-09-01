@@ -16,6 +16,19 @@ object SecureMnemonicCode {
     private const val BIP39_ITERATIONS = 2048
     private const val BIP39_SEED_LENGTH = 64
 
+    /** Word counts accepted by this implementation (BIP-39). */
+    val SUPPORTED_WORD_COUNTS: List<Int> = listOf(12, 15, 18, 21, 24)
+
+    /** BIP-39 word count -> root entropy size in bytes. */
+    fun entropySizeFor(wordCount: Int): Int = when (wordCount) {
+        12 -> 16
+        15 -> 20
+        18 -> 24
+        21 -> 28
+        24 -> 32
+        else -> throw IllegalArgumentException("invalid word count $wordCount")
+    }
+
     private val WORDLIST: List<String> = MnemonicCode.englishWordlist
     private val WORDLIST_CHARS: Array<CharArray> = WORDLIST.map { it.toCharArray() }.toTypedArray()
 
@@ -119,9 +132,12 @@ object SecureMnemonicCode {
      * The caller owns [entropy] (CSPRNG output) and must wipe it after this
      * call returns — it is the root secret and this function does not wipe it.
      *
-     * @param entropy 16, 24, or 32 bytes of CSPRNG output.
+     * @param entropy 16, 20, 24, 28, or 32 bytes of CSPRNG output.
      */
     fun generate(entropy: ByteArray): CharArray {
+        require(entropy.size in listOf(16, 20, 24, 28, 32)) {
+            "entropy must be 16, 20, 24, 28, or 32 bytes (was ${entropy.size})"
+        }
         val entropyBits = BooleanArray(entropy.size * 8)
         try {
             var bitPos = 0

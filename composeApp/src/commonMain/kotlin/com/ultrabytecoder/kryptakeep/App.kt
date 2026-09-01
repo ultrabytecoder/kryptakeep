@@ -20,7 +20,7 @@ import com.ultrabytecoder.kryptakeep.ui.screens.AccountDetailsScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.AccountsListScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.CreateAccountScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.AddTokenScreen
-import com.ultrabytecoder.kryptakeep.ui.screens.CreateWalletScreen
+import com.ultrabytecoder.kryptakeep.ui.screens.CreateWalletFlow
 import com.ultrabytecoder.kryptakeep.ui.screens.ExportMnemonicScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.ManageWalletsScreen
 import com.ultrabytecoder.kryptakeep.ui.screens.ChooseSecurityMethodScreen
@@ -145,7 +145,8 @@ fun App() {
                 val createWallet: CreateWalletUseCase = koinInject()
                 val viewModel = remember { CreateWalletViewModel(createWallet) }
 
-                CreateWalletScreen(
+                CreateWalletFlow(
+                    navController = navController,
                     onWalletCreated = { walletId ->
                         // The PIN is always set up BEFORE wallet creation (startup wizard),
                         // so the session is open and we can go straight to the main screen.
