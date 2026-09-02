@@ -2,6 +2,7 @@ package com.ultrabytecoder.kryptakeep.domain.usecase
 
 import com.ultrabytecoder.kryptakeep.domain.repository.WalletRepository
 import com.ultrabytecoder.kryptakeep.security.SecureMnemonicCode
+import com.ultrabytecoder.kryptakeep.security.gcHint
 import com.ultrabytecoder.kryptakeep.security.toPinBytes
 import com.ultrabytecoder.kryptakeep.security.wipe
 
@@ -18,6 +19,11 @@ import com.ultrabytecoder.kryptakeep.security.wipe
  *
  * The recovery phrase never materializes as an immutable String: validation and
  * seed derivation run on [CharArray]s through [SecureMnemonicCode] (F-7).
+ *
+ * Ownership contract: this use case takes ownership of [mnemonic] and
+ * [passphrase] and wipes them in a finally block (defense in depth — callers
+ * may still hold their own copies, but must not rely on these surviving the
+ * call).
  */
 class CreateWalletUseCase(
     private val walletRepository: WalletRepository
@@ -39,6 +45,11 @@ class CreateWalletUseCase(
         } finally {
             seed?.wipe()
             mnemonicBytes?.wipe()
+            // Defense in depth: wipe the inputs even though the caller also
+            // wipes its copies (wipe is idempotent).
+            mnemonic.wipe()
+            passphrase.wipe()
+            gcHint()
         }
     }
 

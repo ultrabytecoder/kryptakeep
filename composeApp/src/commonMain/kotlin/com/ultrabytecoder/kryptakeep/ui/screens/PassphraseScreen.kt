@@ -178,7 +178,7 @@ fun PassphraseScreen(
                         passphraseError = null
                         viewModel.setPassphrase(passphraseState.toCharArray())
                     } else {
-                        viewModel.setPassphrase(CharArray(0))
+                        viewModel.clearPassphrase()
                     }
                     onNext()
                 },

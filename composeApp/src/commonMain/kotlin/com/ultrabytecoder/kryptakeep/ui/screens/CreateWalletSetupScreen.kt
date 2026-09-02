@@ -106,8 +106,10 @@ fun CreateWalletSetupScreen(
                     if (newMode != mode) {
                         // Wipe restore-mode local secrets when switching away.
                         if (mode == CreateWalletViewModel.Mode.RESTORE_EXISTING) {
+                            mnemonicState.wipe()
                             passphraseState.wipe()
                             passphraseConfirmState.wipe()
+                            mnemonicError = null
                             passphraseError = null
                             usePassphrase = false
                         }
@@ -297,6 +299,12 @@ fun CreateWalletSetupScreen(
                             if (usePassphrase) passphraseState.toCharArray() else CharArray(0)
                         viewModel.setPassphrase(passphraseChars)
                         viewModel.createWalletFromMnemonic(mnemonicChars)
+                        // The ViewModel owns its own copies (wiped in its
+                        // finally block); scrub the UI's local buffers now
+                        // that the secrets have been handed off.
+                        mnemonicState.wipe()
+                        passphraseState.wipe()
+                        passphraseConfirmState.wipe()
                     },
                     enabled = walletName.isNotBlank()
                         && mnemonicState.text.isNotBlank()
