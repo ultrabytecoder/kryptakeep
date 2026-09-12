@@ -37,6 +37,7 @@ data class NetworkConfig(
     val btcGenesisBlockHash: BlockHash,
     val erc20Tokens: Map<String, TokenInfo>,
     val trc20Tokens: Map<String, TokenInfo>,
+    val exchangeRateApiBase: String,
 ) {
     companion object {
         // EIP-1559: 25% safety margin on baseFee to account for next-block fluctuations
@@ -62,6 +63,7 @@ data class NetworkConfig(
             btcGenesisBlockHash = Block.SignetGenesisBlock.hash,
             erc20Tokens = TestnetTokens.erc20Sepolia,
             trc20Tokens = TestnetTokens.trc20Nile,
+            exchangeRateApiBase = "https://backend.kryptakeep.duckdns.org",
         )
 
         fun mainnet(etherscanApiKey: String): NetworkConfig = NetworkConfig(
@@ -80,6 +82,7 @@ data class NetworkConfig(
             btcGenesisBlockHash = Block.LivenetGenesisBlock.hash,
             erc20Tokens = MainnetTokens.erc20,
             trc20Tokens = MainnetTokens.trc20,
+            exchangeRateApiBase = "https://backend.kryptakeep.duckdns.org",
         )
     }
 }

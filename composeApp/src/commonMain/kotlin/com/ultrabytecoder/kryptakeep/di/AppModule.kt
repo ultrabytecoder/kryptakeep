@@ -4,10 +4,10 @@ import com.ultrabytecoder.kryptakeep.data.DatabaseDriverFactory
 import com.ultrabytecoder.kryptakeep.data.DatabaseProvider
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.data.PinRepositoryImpl
+import com.ultrabytecoder.kryptakeep.data.RemoteFiatQuoteProvider
 import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.data.applyCustomNodes
 import com.ultrabytecoder.kryptakeep.domain.provider.FiatQuoteProvider
-import com.ultrabytecoder.kryptakeep.domain.provider.MockFiatQuoteProvider
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.PinRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
@@ -83,5 +83,5 @@ fun appModule(networkConfig: NetworkConfig) = module {
     factory { VerifyPinUseCase(get()) }
     factory { ChangePinUseCase(get()) }
 
-    single<FiatQuoteProvider> { MockFiatQuoteProvider() }
+    single<FiatQuoteProvider> { RemoteFiatQuoteProvider(get()) }
 }

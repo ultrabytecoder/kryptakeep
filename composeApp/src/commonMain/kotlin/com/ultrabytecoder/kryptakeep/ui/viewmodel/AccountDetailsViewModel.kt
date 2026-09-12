@@ -57,7 +57,7 @@ class AccountDetailsViewModel(
     val error: StateFlow<String?> = _uiState.map { it.error }.stateIn(viewModelScope, SharingStarted.Lazily, null)
 
     val fiatCurrency: StateFlow<FiatCurrency> = MutableStateFlow(
-        FiatCurrency.fromCode(settingsStorage.getString(SettingsKeys.FIAT_CURRENCY))
+        FiatCurrency.fromStored(settingsStorage.getString(SettingsKeys.FIAT_CURRENCY))
     ).asStateFlow()
 
     private val _selectedAccountFlow = MutableStateFlow<AccountInfo?>(null)

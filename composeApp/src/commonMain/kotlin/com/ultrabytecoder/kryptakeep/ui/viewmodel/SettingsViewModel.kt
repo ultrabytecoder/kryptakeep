@@ -13,7 +13,7 @@ class SettingsViewModel(
 ) : ViewModel() {
 
     private val _fiatCurrency = MutableStateFlow(
-        FiatCurrency.fromCode(settingsStorage.getString(SettingsKeys.FIAT_CURRENCY))
+        FiatCurrency.fromStored(settingsStorage.getString(SettingsKeys.FIAT_CURRENCY))
     )
     val fiatCurrency: StateFlow<FiatCurrency> = _fiatCurrency.asStateFlow()
 

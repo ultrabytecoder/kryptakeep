@@ -215,7 +215,7 @@ fun SettingsScreen(
                         expanded = currencyMenuExpanded,
                         onDismissRequest = { currencyMenuExpanded = false }
                     ) {
-                        FiatCurrency.entries.forEach { currency ->
+                        FiatCurrency.SUPPORTED.forEach { currency ->
                             DropdownMenuItem(
                                 text = { Text("${currency.code} — ${currency.displayName}") },
                                 onClick = {

@@ -38,7 +38,7 @@ class AccountsListViewModel(
     val syncingAccounts: StateFlow<Set<String>> = syncManager.syncingAccounts
 
     val fiatCurrency: StateFlow<FiatCurrency> = MutableStateFlow(
-        FiatCurrency.fromCode(settingsStorage.getString(SettingsKeys.FIAT_CURRENCY))
+        FiatCurrency.fromStored(settingsStorage.getString(SettingsKeys.FIAT_CURRENCY))
     ).asStateFlow()
 
     // Grouped accounts: native parents with their token children
