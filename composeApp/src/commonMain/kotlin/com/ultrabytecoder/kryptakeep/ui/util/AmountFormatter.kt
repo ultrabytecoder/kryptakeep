@@ -18,7 +18,7 @@ fun formatAmount(rawAmount: String, accountType: AccountType, chainData: String?
     return when (accountType) {
         is AccountType.Btc -> formatNative(rawAmount, BTC_DECIMALS, "BTC")
         is AccountType.Eth -> formatNative(rawAmount, ETH_DECIMALS, "ETH")
-        is AccountType.Ton -> formatNative(rawAmount, TON_DECIMALS, "TON")
+        is AccountType.Ton -> formatNative(rawAmount, TON_DECIMALS, "GRAM")
         is AccountType.Trx -> formatNative(rawAmount, TRX_DECIMALS, "TRX")
         is AccountType.Erc20 -> formatToken(rawAmount, chainData)
         is AccountType.Trc20 -> formatToken(rawAmount, chainData)

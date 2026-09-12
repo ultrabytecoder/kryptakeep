@@ -246,7 +246,7 @@ fun AddTokenScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "No ETH, TRX, or TON accounts found. Create one first.",
+                        "No ETH, TRX, or GRAM accounts found. Create one first.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }

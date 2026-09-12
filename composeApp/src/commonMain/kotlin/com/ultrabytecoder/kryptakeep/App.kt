@@ -201,9 +201,10 @@ fun App() {
                 val keyProvider: com.ultrabytecoder.kryptakeep.domain.service.KeyProvider = koinInject()
                 val networkConfig: com.ultrabytecoder.kryptakeep.data.NetworkConfig = koinInject()
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
+                val quoteProvider: FiatQuoteProvider = koinInject()
                 val viewModel = remember(route.accountId) {
                     SendViewModel(route.accountId, getAccounts, send, estimateFee, syncAccount,
-                        accountRepository, utxoRepository, transactionRepository, keyProvider, networkConfig, settingsStorage)
+                        accountRepository, utxoRepository, transactionRepository, keyProvider, networkConfig, settingsStorage, quoteProvider)
                 }
                 SendScreen(navController, viewModel)
             }

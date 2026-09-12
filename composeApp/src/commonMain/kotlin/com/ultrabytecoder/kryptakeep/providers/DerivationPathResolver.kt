@@ -16,7 +16,7 @@ object DerivationPathResolver {
         is AccountType.Ton -> "m/44'/607'/$accountIndex'"
         is AccountType.Erc20 -> error("ERC20 tokens do not have their own derivation path")
         is AccountType.Trc20 -> error("TRC20 tokens do not have their own derivation path")
-        is AccountType.TonToken -> error("TON tokens do not have their own derivation path")
+        is AccountType.TonToken -> error("Jetton tokens do not have their own derivation path")
     }
 
     fun expectedDepth(accountType: AccountType): Int = when (accountType) {

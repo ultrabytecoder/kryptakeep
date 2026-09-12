@@ -26,6 +26,7 @@ import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.ui.util.formatFeeChipRate
 import com.ultrabytecoder.kryptakeep.ui.util.formatFeeDetail
+import com.ultrabytecoder.kryptakeep.ui.util.formatFiat
 import com.ultrabytecoder.kryptakeep.ui.util.formatGwei
 import com.ultrabytecoder.kryptakeep.ui.util.parseGweiToMilliGwei
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.FeeSelectionMode
@@ -39,6 +40,9 @@ fun SendScreen(
 ) {
     val account by viewModel.account.collectAsState()
     val fee by viewModel.fee.collectAsState()
+    val feeFiat by viewModel.feeFiat.collectAsState()
+    val totalFiat by viewModel.totalFiat.collectAsState()
+    val fiatCurrency by viewModel.fiatCurrency.collectAsState()
     val feeError by viewModel.feeError.collectAsState()
     val feePresets by viewModel.feePresets.collectAsState()
     val selectedFeeMode by viewModel.selectedFeeMode.collectAsState()
@@ -87,6 +91,9 @@ fun SendScreen(
     }
 
     val showFeeSection = viewModel.showFeeSection()
+
+    // Re-read the fiat currency selection when (re)entering the screen.
+    LaunchedEffect(Unit) { viewModel.refreshFiatCurrency() }
 
     LaunchedEffect(amount, address, selectedFeeMode, btcFeeText, ethPriorityText, ethMaxFeeText, trc20FeeText) {
         if (amount.isNotBlank()) {
@@ -267,11 +274,20 @@ fun SendScreen(
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer
                                 )
-                                Text(
-                                    text = feeVal?.totalCost?.toPlainString() ?: "",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = feeVal?.totalCost?.toPlainString() ?: "",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    if (feeFiat != null) {
+                                        Text(
+                                            text = formatFiat(feeFiat!!, fiatCurrency.code),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
                             }
                             if (feeDetailLines != null) {
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -285,7 +301,7 @@ fun SendScreen(
                                     }
                                 }
                             }
-                            if (total != null) {
+                            if (total != null || totalFiat != null) {
                                 HorizontalDivider(
                                     modifier = Modifier.padding(vertical = 6.dp),
                                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.2f)
@@ -299,11 +315,22 @@ fun SendScreen(
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onSecondaryContainer
                                     )
-                                    Text(
-                                        text = total.toPlainString(),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                                    )
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        // For token accounts the crypto total is meaningless
+                                        // (token amount + native fee), show it as "—" there.
+                                        Text(
+                                            text = total?.toPlainString() ?: "—",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                        if (totalFiat != null) {
+                                            Text(
+                                                text = formatFiat(totalFiat!!, fiatCurrency.code),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -421,7 +448,7 @@ private fun FeeSelector(
     //   * ETH              -> Auto, Conservative, Balanced, Generous, Custom
     //   * TRC20            -> Auto, Conservative, Balanced, Generous, Custom
     //   * native TRX       -> Auto only (disabled, no presets)
-    //   * TON              -> selector hidden (no presets)
+    //   * GRAM             -> selector hidden (no presets)
     val hasPresets = feePresets != null
     val isNativeTrx = isTrx && !hasPresets
     val visibleChipModes = when {

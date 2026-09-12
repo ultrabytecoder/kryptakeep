@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
 import android.os.Bundle
-import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,6 +46,7 @@ import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.GlobalHistogramBinarizer
 import com.google.zxing.common.HybridBinarizer
 import com.google.zxing.InvertedLuminanceSource
+import com.ultrabytecoder.kryptakeep.ui.util.applySecureFlag
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -98,11 +98,9 @@ class QrScannerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         // Prevent screenshots / screen recordings / app-switcher previews of the
-        // scanned content, consistent with the rest of the app.
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
+        // scanned content, consistent with the rest of the app. Skipped in debug
+        // builds so scrcpy works during development / QA.
+        window.applySecureFlag()
 
         setContent {
             ScannerUi(

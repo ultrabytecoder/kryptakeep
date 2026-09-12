@@ -276,7 +276,7 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Set custom RPC/API endpoints for BTC, ETH, TRX, TON",
+                            "Set custom RPC/API endpoints for BTC, ETH, TRX, GRAM",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
