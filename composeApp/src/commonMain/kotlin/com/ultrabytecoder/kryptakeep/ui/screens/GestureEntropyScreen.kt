@@ -30,6 +30,7 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
 import com.ultrabytecoder.kryptakeep.security.GestureEntropyAccumulator
 import kotlin.math.hypot
+import kotlin.time.TimeSource
 
 /** Minimum inter-sample distance (dp) below which samples are micro-jitter. */
 private const val MIN_DISTANCE_DP = 4f
@@ -59,6 +60,8 @@ fun GestureEntropyScreen(
     // Bumped on every pointer move so the Canvas recomposes and redraws the
     // trail immediately — a List is not observable state on its own.
     var drawTick by remember { mutableStateOf(0) }
+    // Monotonic baseline for sample timestamps (cross-platform, unlike System.nanoTime).
+    val gestureStart = remember { TimeSource.Monotonic.markNow() }
 
     val density = LocalDensity.current
     val minDistancePx = with(density) { MIN_DISTANCE_DP.dp.toPx() }
@@ -134,7 +137,7 @@ fun GestureEntropyScreen(
                                     x = offset.x,
                                     y = offset.y,
                                     pressure = 1f,
-                                    timestampMillis = System.nanoTime() / 1_000_000
+                                    timestampMillis = gestureStart.elapsedNow().inWholeMilliseconds
                                 )
                                 appendTrail(offset.x, offset.y)
                                 progress = (progress + TAP_PROGRESS_INCREMENT).coerceIn(0f, 1f)
@@ -152,7 +155,7 @@ fun GestureEntropyScreen(
                                         x = offset.x,
                                         y = offset.y,
                                         pressure = 1f,
-                                        timestampMillis = System.nanoTime() / 1_000_000
+                                        timestampMillis = gestureStart.elapsedNow().inWholeMilliseconds
                                     )
                                     appendTrail(offset.x, offset.y)
                                 },
