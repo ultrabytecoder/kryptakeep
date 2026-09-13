@@ -4,6 +4,7 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import com.ultrabytecoder.kryptakeep.data.DatabaseDriverFactory
 import com.ultrabytecoder.kryptakeep.data.DatabaseProvider
+import com.ultrabytecoder.kryptakeep.data.GuardedSqlDriver
 import com.ultrabytecoder.kryptakeep.db.KryptaKeepDatabase
 import com.ultrabytecoder.kryptakeep.security.monotonicNowMillis
 import kotlinx.coroutines.CancellationException
@@ -16,7 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+
 
 /**
  * Result of [SessionManager.unlock]. Distinguishes a successful unlock from a
@@ -63,13 +64,17 @@ sealed interface UnlockResult {
  * re-acquires the lock and re-checks [lockRequested] before publishing state.
  */
 class SessionManager(
-    private val databaseDriverFactory: DatabaseDriverFactory,
+    private val databaseDriverFactory: DbSessionFactory,
     private val appScope: CoroutineScope
-) : DatabaseProvider {
+) : DatabaseProvider, com.ultrabytecoder.kryptakeep.data.SessionUnlocker {
 
     private companion object {
         const val IDLE_TIMEOUT_MS = 5 * 60 * 1000L
         const val IDLE_CHECK_INTERVAL_MS = 1000L
+
+        // Bounded drain budget for closing the driver while queries are in flight.
+        const val CLOSE_DRAIN_POLL_MS = 5L
+        const val CLOSE_DRAIN_TIMEOUT_MS = 500L
     }
 
     private val _isUnlocked = MutableStateFlow(false)
@@ -77,9 +82,25 @@ class SessionManager(
 
     private val stateLock = Mutex()
 
+    // The published references are mutated only under [stateLock] and read from
+    // arbitrary worker threads via database(); the in-flight counter below is a
+    // true atomic, and on Kotlin/Native plain field writes across threads carry
+    // sequential-consistency ordering for these publish/consume paths.
     private var dek: ByteArray? = null
+
     private var driver: SqlDriver? = null
+
     private var database: KryptaKeepDatabase? = null
+
+    /**
+     * Number of query executions currently in flight on the published driver.
+     * [database] increments it for the duration of a guarded query; [lock]'s
+     * close path waits (without holding [stateLock]) for this to reach zero
+     * before closing the SQLCipher driver, so native SQLite handles are never
+     * freed while a statement is mid-execution (SIGSEGV / use-after-free).
+     */
+    private val inFlightQueries = AtomicCounter(0)
+
 
     private var lastActivity: Long = 0L
 
@@ -128,7 +149,7 @@ class SessionManager(
      * (stale/corrupt database), unlock fails and the caller must route to the recovery
      * flow (PIN re-setup through the setup wizard), never to file deletion.
      */
-    suspend fun unlock(dek: ByteArray): UnlockResult {
+    override suspend fun unlock(dek: ByteArray): UnlockResult {
         // Phase 1: check state under the lock. Clear the lockRequested flag (a
         // stale flag from a previous lock() must not abort this unlock). If the
         // session is locked, also clear stale driver/database/dek from a previous
@@ -153,7 +174,7 @@ class SessionManager(
 
         // Phase 2: open the driver OUTSIDE the lock (createDriver is suspending).
         // lock() cannot run here because it suspends on stateLock.
-        val newDriver = try {
+        val rawDriver = try {
             databaseDriverFactory.createDriver(dek)
         } catch (e: CancellationException) {
             throw e
@@ -168,9 +189,10 @@ class SessionManager(
         try {
             if (lockRequested) {
                 // A lock was requested while we were opening the driver — honour it.
-                try { newDriver.close() } catch (_: Exception) {}
+                try { rawDriver.close() } catch (_: Exception) {}
                 return UnlockResult.Locked
             }
+            val newDriver = GuardedSqlDriver(rawDriver, this)
             val newDatabase = KryptaKeepDatabase(newDriver)
             probe(newDriver)
             closeInternal()
@@ -183,7 +205,7 @@ class SessionManager(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            try { newDriver.close() } catch (_: Exception) {}
+            try { rawDriver.close() } catch (_: Exception) {}
             return UnlockResult.Failed
         } finally {
             stateLock.unlock()
@@ -196,7 +218,7 @@ class SessionManager(
      * where no wallet data is at stake — the flag is not exposed through the public
      * [unlock] API on purpose.
      */
-    internal suspend fun unlockRecreating(dek: ByteArray): Boolean {
+    override suspend fun unlockRecreating(dek: ByteArray): Boolean {
         // Phase 1: clear state under the lock. Do NOT return early if the session
         // is unlocked: setupPin generates a brand-new DEK, so the old database must
         // be closed and recreated. closeInternal() does not set _isUnlocked = false
@@ -237,11 +259,12 @@ class SessionManager(
         // Phase 3: commit under the lock. Re-check lockRequested.
         stateLock.lock()
         try {
-            val d = newDriver ?: return false
+            val raw = newDriver ?: return false
             if (lockRequested) {
-                try { d.close() } catch (_: Exception) {}
+                try { raw.close() } catch (_: Exception) {}
                 return false
             }
+            val d = GuardedSqlDriver(raw, this)
             val newDatabase = KryptaKeepDatabase(d)
             probe(d)
             closeInternal()
@@ -282,7 +305,13 @@ class SessionManager(
      */
     fun lock() {
         appScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            stateLock.withLock {
+            // Mark locked first so new guarded queries fail fast, then drain the
+            // in-flight ones (awaitInFlightQueriesDrained acquires stateLock once
+            // they are done and holds it), then close under the same lock — no
+            // unlock phase can interleave between the drain and the close.
+            _isUnlocked.value = false
+            awaitInFlightQueriesDrained()
+            try {
                 // Set the flag and do NOT reset it: the next unlock() Phase 1 will
                 // clear it. If we reset it here, an unlock() in Phase 3 (after the
                 // lock was released during Phase 2) would see lockRequested == false
@@ -292,13 +321,46 @@ class SessionManager(
                 HardwareKeyStore.purgeCache()
                 idleJob?.cancel()
                 idleJob = null
-                _isUnlocked.value = false
+            } finally {
+                stateLock.unlock()
             }
+        }
+    }
+
+    /**
+     * Waits (bounded) for [inFlightQueries] to reach zero so the driver can be
+     * closed without yanking native SQLite handles out from under a running
+     * statement. If queries do not drain within the budget, closing proceeds —
+     * hung statements are already broken by SQLCipher's own timeout handling,
+     * and refusing to lock would keep the DEK and database open indefinitely.
+     *
+     * The [stateLock] is acquired (without releasing it) once the counter drains:
+     * a successful acquire proves no unlock()/unlockRecreating() phase is in
+     * flight either — a Phase-2 driver open that completed just before the drain
+     * would otherwise have its handle closed mid-construction. Holding the mutex
+     * across the close also preserves the original invariant that close never
+     * interleaves with an unlock. Deadlock-free by design: guarded query workers
+     * never acquire [stateLock], so draining can always complete.
+     */
+    private suspend fun awaitInFlightQueriesDrained() {
+        stateLock.lock()
+        var waitedMillis = 0L
+        while (inFlightQueries.get() > 0 && waitedMillis < CLOSE_DRAIN_TIMEOUT_MS) {
+            try {
+                delay(CLOSE_DRAIN_POLL_MS)
+            } catch (e: CancellationException) {
+                stateLock.unlock()
+                throw e
+            }
+            waitedMillis += CLOSE_DRAIN_POLL_MS
         }
     }
 
     private fun closeInternal() {
         try {
+            // Close the GUARDED wrapper: it delegates to rawDriver.close(), but a
+            // stray consumer close() on the published driver can never reach the
+            // native handle — only this path (after the in-flight drain) closes.
             driver?.close()
         } catch (_: Exception) {
         }
@@ -309,5 +371,30 @@ class SessionManager(
     }
 
     override fun database(): KryptaKeepDatabase =
-        database ?: throw IllegalStateException("Database is locked")
+        database?.takeIf { _isUnlocked.value } ?: throw IllegalStateException("Database is locked")
+
+    /**
+     * Increments the in-flight query counter. Called by [GuardedSqlDriver] around
+     * every statement so [lock]'s drain knows when it is safe to close the driver.
+     */
+    fun beginQuery() {
+        inFlightQueries.incrementAndGet()
+    }
+
+    /** Releases a guard acquired by [beginQuery]. Must be called exactly once per acquire. */
+    fun endQuery() {
+        inFlightQueries.decrementAndGet()
+    }
+}
+
+
+/**
+ * Session-scoped factory for the encrypted database driver. The production
+ * binding (see `expect platformDriverFactory()` in di) delegates to the platform
+ * [com.ultrabytecoder.kryptakeep.data.DatabaseDriverFactory]; tests substitute a
+ * fake that returns an in-memory driver without SQLCipher.
+ */
+interface DbSessionFactory {
+    suspend fun createDriver(passphrase: ByteArray): SqlDriver
+    fun deleteDatabase()
 }

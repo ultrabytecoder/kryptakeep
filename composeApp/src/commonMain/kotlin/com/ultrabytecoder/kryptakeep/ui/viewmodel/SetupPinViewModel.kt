@@ -2,6 +2,7 @@ package com.ultrabytecoder.kryptakeep.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ultrabytecoder.kryptakeep.data.ExistingKeyMaterialException
 import com.ultrabytecoder.kryptakeep.data.SettingsKeys
 import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
@@ -25,6 +26,13 @@ data class SetupPinState(
 
 sealed class SetupPinEvent {
     data object NavigateToCreateWallet : SetupPinEvent()
+
+    /**
+     * Existing key material was found while the lockout metadata was missing —
+     * a fresh PIN would destroy the wallet. The UI must confirm recovery with
+     * the user, then re-invoke [SetupPinViewModel.confirmRecovery].
+     */
+    data object RecoveryConfirmationRequired : SetupPinEvent()
 }
 
 /**
@@ -140,6 +148,20 @@ class SetupPinViewModel(
                 _events.emit(SetupPinEvent.NavigateToCreateWallet)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
+            } catch (e: ExistingKeyMaterialException) {
+                // Key material exists but the lockout state was missing — do NOT
+                // overwrite silently. Ask the UI to confirm recovery; on confirm,
+                // call confirmRecovery(pinChars-will-be-re-entered...). The PIN
+                // buffers are wiped here; the user re-enters after confirming.
+                _state.update {
+                    it.copy(
+                        isConfirming = false,
+                        isProcessing = false,
+                        enteredPinLength = 0,
+                        errorMessage = e.message
+                    )
+                }
+                _events.emit(SetupPinEvent.RecoveryConfirmationRequired)
             } catch (e: Exception) {
                 _state.update {
                     it.copy(
@@ -151,6 +173,29 @@ class SetupPinViewModel(
                 }
             } finally {
                 pinChars.wipe()
+            }
+        }
+    }
+
+    /** Completes setup after the user explicitly acknowledged recovery (destroys existing key material). */
+    fun confirmRecovery(pin: CharArray) {
+        _state.update { it.copy(isProcessing = true) }
+        viewModelScope.launch {
+            try {
+                setupPinUseCase(pin, SecurityMethod.PIN, recoveryAcknowledged = true)
+                _state.update { it.copy(isProcessing = false) }
+                _events.emit(SetupPinEvent.NavigateToCreateWallet)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(
+                        isConfirming = false,
+                        isProcessing = false,
+                        enteredPinLength = 0,
+                        errorMessage = e.message ?: "Failed to set PIN"
+                    )
+                }
             }
         }
     }

@@ -38,6 +38,11 @@ actual object HardwareKeyStore {
     @Volatile
     private var fallbackKey: ByteArray? = null
 
+    // Install ID captured by configureInstallId() so a provider constructed later
+    // (retry path) still receives the binding before its first use.
+    @Volatile
+    private var installBoundId: ByteArray? = null
+
     private val random = SecureRandom()
 
     /**
@@ -53,7 +58,10 @@ actual object HardwareKeyStore {
      * internal operations synchronize on the same monitor (no nested locks).
      */
     private fun provider(): KeystoreProvider = synchronized(keyLock) {
-        providerHolder ?: createKeystoreProvider(keyLock).also { providerHolder = it }
+        providerHolder ?: createKeystoreProvider(keyLock).also {
+            installBoundId?.let { id -> it.configureInstallId(id) }
+            providerHolder = it
+        }
     }
 
     /**
@@ -81,8 +89,15 @@ actual object HardwareKeyStore {
     }
 
     actual fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray {
+        // Desktop providers that operate on byte blobs (OS key stores whose keys
+        // cannot be exported as a JVM SecretKey — e.g. macOS Secure Enclave ECIES)
+        // handle the whole operation themselves.
+        val opProvider = provider()
+        if (opProvider.handlesBlobOperations()) {
+            return synchronized(keyLock) { opProvider.encrypt(plaintext, aad) }
+        }
         val key = synchronized(keyLock) {
-            provider().getOrCreateKey() ?: SecretKeySpec(getOrCreateFallbackKey(), "AES")
+            opProvider.getOrCreateKey() ?: SecretKeySpec(getOrCreateFallbackKey(), "AES")
         }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key)
@@ -92,8 +107,16 @@ actual object HardwareKeyStore {
     }
 
     actual fun decrypt(encrypted: ByteArray, aad: ByteArray): ByteArray {
+        val opProvider = provider()
+        if (opProvider.handlesBlobOperations()) {
+            return synchronized(keyLock) { opProvider.decrypt(encrypted, aad) }
+        }
         val key = resolveKeyForDecrypt()
             ?: throw HardwareKeyInvalidatedException("Device hardware key missing")
+        return decryptWithKey(key, encrypted, aad)
+    }
+
+    private fun decryptWithKey(key: SecretKey, encrypted: ByteArray, aad: ByteArray): ByteArray {
         require(encrypted.size > GCM_IV_LENGTH) { "Encrypted data too short" }
         val iv = encrypted.copyOfRange(0, GCM_IV_LENGTH)
         val ciphertext = encrypted.copyOfRange(GCM_IV_LENGTH, encrypted.size)
@@ -116,7 +139,8 @@ actual object HardwareKeyStore {
         synchronized(keyLock) {
             fallbackKey?.wipe()
             fallbackKey = null
-            provider().deleteKey()
+            val p = provider()
+            if (p.handlesBlobOperations()) p.deleteBlobKey() else p.deleteKey()
         }
     }
 
@@ -126,17 +150,26 @@ actual object HardwareKeyStore {
         // in-memory fallback key IS the cache, so it is wiped here. The next
         // encrypt/decrypt re-creates a fresh fallback key, which is the intended
         // "session is over" behavior (old ciphertext then fails GCM auth).
+        // Blob-handling providers wipe their own cached OS key.
         synchronized(keyLock) {
             fallbackKey?.wipe()
             fallbackKey = null
+            provider().purgeCache()
         }
     }
 
     actual fun configureInstallId(id: ByteArray) {
-        // No-op on the JVM target: the Android Keystore key is already
-        // device-bound, and the in-memory fallback has no OS store to bind.
-        // Install-ID binding on this target is provided at the AES-GCM layer by
-        // KeyManager.wrapAad() (the AAD includes the install ID), not here.
+        // The Android Keystore key is already device-bound, and the in-memory
+        // fallback has no OS store to bind (install-ID binding there is provided
+        // at the AES-GCM layer by KeyManager.wrapAad()). Desktop providers
+        // override configureInstallId to bind their OS-store blob (F-11, Windows
+        // DPAPI entropy). The id is retained so a provider constructed later
+        // (retry path) receives it too.
+        synchronized(keyLock) {
+            installBoundId?.wipe()
+            installBoundId = id.copyOf()
+            provider().configureInstallId(id)
+        }
     }
 }
 
@@ -169,4 +202,41 @@ internal open class KeystoreProvider(protected val lock: Any) {
 
     /** Deletes the hardware-backed key; no-op when no Keystore exists. */
     open fun deleteKey() {}
+
+    /**
+     * True when this provider performs the encrypt/decrypt operations itself on
+     * byte blobs (OS key stores whose device key cannot be exported as a JVM
+     * [SecretKey] — e.g. macOS Secure Enclave ECIES). The default false keeps
+     * the shared AES-GCM path in HardwareKeyStore for Android and the in-memory
+     * fallback. Blob-handling providers implement [encrypt]/[decrypt] and
+     * [deleteBlobKey]; [getOrCreateKey] returns null for them.
+     */
+    open fun handlesBlobOperations(): Boolean = false
+
+    /** Blob-path encrypt; only called when [handlesBlobOperations] is true. */
+    open fun encrypt(plaintext: ByteArray, aad: ByteArray): ByteArray =
+        throw UnsupportedOperationException("Provider does not handle blob operations")
+
+    /** Blob-path decrypt; only called when [handlesBlobOperations] is true. */
+    open fun decrypt(encrypted: ByteArray, aad: ByteArray): ByteArray =
+        throw UnsupportedOperationException("Provider does not handle blob operations")
+
+    /** Deletes the OS-store device key on the blob path (see [encrypt]/[decrypt]). */
+    open fun deleteBlobKey() {}
+
+    /**
+     * Wipes any in-process cache of the unwrapped device key (the on-disk /
+     * OS-store key is NOT deleted). No-op by default; blob-handling providers
+     * override this to wipe their cached copy. Called by HardwareKeyStore.purgeCache().
+     */
+    open fun purgeCache() {}
+
+    /**
+     * Binds the device key to the install ID (F-11). The default is a no-op: the
+     * Android Keystore key is already device-bound and the in-memory fallback has
+     * no OS store to bind. Desktop providers override this to bind their OS-store
+     * blob (e.g. Windows DPAPI entropy). Called by [HardwareKeyStore] before the
+     * provider's first use, and again whenever a new provider is constructed.
+     */
+    open fun configureInstallId(id: ByteArray) {}
 }

@@ -1,6 +1,6 @@
 package com.ultrabytecoder.kryptakeep.di
 
-import com.ultrabytecoder.kryptakeep.data.DatabaseDriverFactory
+import com.ultrabytecoder.kryptakeep.security.DbSessionFactory
 import com.ultrabytecoder.kryptakeep.data.DatabaseProvider
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.data.PinRepositoryImpl
@@ -50,7 +50,7 @@ fun appModule(networkConfig: NetworkConfig) = module {
     // Security: envelope key management + lazy session (DB opens only after unlock)
     single { KeyManager(get()) }
     single { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
-    single { SessionManager(get(), get()) }
+    single { SessionManager(platformDriverFactory(), get()) }
     single<DatabaseProvider> { get<SessionManager>() }
 
     single<AccountRepository> { com.ultrabytecoder.kryptakeep.data.AccountRepository(get()) }

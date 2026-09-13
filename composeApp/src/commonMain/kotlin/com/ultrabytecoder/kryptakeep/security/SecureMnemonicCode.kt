@@ -53,6 +53,11 @@ object SecureMnemonicCode {
             require(words.size % 3 == 0) { "invalid mnemonic word count ${words.size}, it must be a multiple of 3" }
 
             for (w in words.indices) {
+                // Accepted risk: linear wordlist lookup is not constant-time (word
+                // position leaks into comparison count). Not exploitable here — the
+                // mnemonic is typed locally through the UI with no remote timing
+                // oracle, and a HashMap lookup would materialize wordlist entries
+                // as immutable Strings, violating the zero-String secret policy.
                 val idx = WORDLIST_CHARS.indexOfFirst { it.contentEquals(words[w]) }
                 if (idx < 0) throw IllegalArgumentException("invalid mnemonic word")
                 indexes[w] = idx

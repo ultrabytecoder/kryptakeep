@@ -42,6 +42,7 @@ fun PinScreenSetup(
     viewModel: SetupPinViewModel
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var showRecoveryDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -52,8 +53,28 @@ fun PinScreenSetup(
                         popUpTo(0) { inclusive = true }
                     }
                 }
+                SetupPinEvent.RecoveryConfirmationRequired -> {
+                    showRecoveryDialog = true
+                }
             }
         }
+    }
+
+    if (showRecoveryDialog) {
+        AlertDialog(
+            onDismissRequest = { showRecoveryDialog = false },
+            title = { Text("Recovery required") },
+            text = {
+                Text(
+                    "Existing wallet key material was found, but its unlock state is missing. " +
+                        "Setting up a new PIN will permanently erase the existing wallet. " +
+                        "You can restore it only from your recovery phrase."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showRecoveryDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 
     Scaffold(

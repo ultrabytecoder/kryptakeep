@@ -112,6 +112,15 @@ class KeyManager(
     }
 
     /**
+     * True when a DEK envelope value is stored at all — WITHOUT parsing it. A
+     * corrupted envelope still counts here, unlike [hasPinKeyMaterial] (which
+     * reports corruption as "no material"). Use this to decide whether fresh key
+     * setup would DESTROY existing key material: a corrupted-but-present
+     * envelope must route to recovery, never to a silent fresh setup.
+     */
+    fun hasRawEnvelope(): Boolean = settingsStorage.getString(KEY_WRAPPED_DEK) != null
+
+    /**
      * Generates a brand-new DEK and wraps it with [pin] (fresh setup / recovery).
      * Caller owns the returned array.
      */
@@ -175,7 +184,12 @@ class KeyManager(
             // The stored KDF parameters win: they are the values the DEK was wrapped
             // with, so re-deriving with different parameters would always fail GCM.
             kek = deriveKek(pinBytes, salt, envelope)
-            dek = AesGcm.decrypt(kek, wrapped, wrapAad())
+            val aad = wrapAad()
+            dek = try {
+                AesGcm.decrypt(kek, wrapped, aad)
+            } finally {
+                aad.wipe()
+            }
             dek
         } catch (e: AesGcmAuthenticationException) {
             null
@@ -277,7 +291,12 @@ class KeyManager(
                 )
                 KDF_PBKDF2_SHA256 to PinConfig.PBKDF2_FALLBACK_ITERATIONS
             }
-            wrapped = AesGcm.encrypt(kek, dek, wrapAad())
+            val aad = wrapAad()
+            wrapped = try {
+                AesGcm.encrypt(kek, dek, aad)
+            } finally {
+                aad.wipe()
+            }
             // Record Argon2 memory/parallelism only for Argon2id envelopes; a
             // PBKDF2 envelope has no such parameters (deriveKek ignores them,
             // but storing 0 keeps the envelope self-describing).

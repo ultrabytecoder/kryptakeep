@@ -46,6 +46,13 @@ data class PinSecureData(
 private const val PIN_DATA_KEY = "pin_data"
 
 /**
+ * Thrown by [PinRepositoryImpl.setupPin] when existing DEK key material would be
+ * destroyed without an explicit recovery acknowledgement. The UI must confirm
+ * recovery with the user and retry with `recoveryAcknowledged = true`.
+ */
+class ExistingKeyMaterialException(message: String) : Exception(message)
+
+/**
  * PIN lifecycle: setup, verification (via envelope unwrap of the DEK — the correct PIN
  * is proven by a successful GCM authentication), lockout bookkeeping.
  *
@@ -59,9 +66,9 @@ private const val PIN_DATA_KEY = "pin_data"
  * corruption (max attempts, force recovery).
  */
 class PinRepositoryImpl(
-    private val settingsStorage: SettingsStorage,
+    private val settingsStorage: SettingsStore,
     private val keyManager: KeyManager,
-    private val sessionManager: SessionManager,
+    private val sessionManager: SessionUnlocker,
     private val walletRepository: com.ultrabytecoder.kryptakeep.domain.repository.WalletRepository
 ) : PinRepository {
 
@@ -96,7 +103,21 @@ class PinRepositoryImpl(
 
                 val stored = settingsStorage.getString(PIN_DATA_KEY)
                 if (stored == null) {
-                    _pinStateFlow.value = PinState.NotSetup
+                    // No lockout metadata. If key material exists the state is
+                    // inconsistent (metadata lost while a wallet may exist) —
+                    // route to recovery instead of offering a fresh setup that
+                    // would deleteAll() the existing envelope. hasRawEnvelope
+                    // (not hasPinKeyMaterial) so a CORRUPTED-but-present
+                    // envelope also counts as existing material.
+                    _pinStateFlow.value = if (keyManager.hasRawEnvelope()) {
+                        PinState.Setup(
+                            failedAttempts = PinConfig.MAX_ATTEMPTS,
+                            lockedUntil = 0,
+                            isCorrupted = true
+                        )
+                    } else {
+                        PinState.NotSetup
+                    }
                     return@withContext
                 }
 
@@ -121,12 +142,28 @@ class PinRepositoryImpl(
         }
     }
 
-    override suspend fun setupPin(pin: CharArray, method: SecurityMethod) = withContext(Dispatchers.Default) {
+    override suspend fun setupPin(pin: CharArray, method: SecurityMethod, recoveryAcknowledged: Boolean) =
+        withContext(Dispatchers.Default) {
         require(CredentialValidator.validate(method, pin).ok) {
             "Invalid credential"
         }
 
         mutex.withLock {
+            // Guard against silent wallet destruction: if a DEK envelope (raw,
+            // parsed or corrupted) exists, fresh setup would deleteAll() it and
+            // orphan the SQLCipher database. Only the acknowledged recovery flow
+            // may proceed; a missing lockout state with key material present is
+            // surfaced as corrupted by loadState()/loadLockoutGate().
+            if (keyManager.hasRawEnvelope() && !recoveryAcknowledged) {
+                _pinStateFlow.value = PinState.Setup(
+                    failedAttempts = PinConfig.MAX_ATTEMPTS,
+                    lockedUntil = 0,
+                    isCorrupted = true
+                )
+                throw ExistingKeyMaterialException(
+                    "Existing wallet key material found. Recovery required — setting up a new PIN will erase it."
+                )
+            }
             // The credential is set up first (startup wizard), so no raw DEK exists yet —
             // always generate a fresh one and open the (empty) database with it.
             // Recreating the DB is safe here: there is no wallet data at stake
@@ -416,7 +453,20 @@ class PinRepositoryImpl(
             )
             null
         }
-        if (loaded == null) return LockoutGate.Corrupted
+        if (loaded == null) {
+            // Missing lockout metadata: distinguish a fresh install from lost
+            // metadata over existing key material. The latter must show the
+            // corrupted (recovery) state so the user is never silently routed
+            // into a fresh setup that would destroy the wallet.
+            if (settingsStorage.getString(PIN_DATA_KEY) == null && keyManager.hasRawEnvelope()) {
+                _pinStateFlow.value = PinState.Setup(
+                    failedAttempts = PinConfig.MAX_ATTEMPTS,
+                    lockedUntil = 0,
+                    isCorrupted = true
+                )
+            }
+            return LockoutGate.Corrupted
+        }
 
         val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
         val nowMono = monotonicNowMillis()
@@ -518,7 +568,12 @@ class PinRepositoryImpl(
      */
     private fun loadData(stored: String): PinSecureData {
         val blob = Base64.Default.decode(stored)
-        val plain = HardwareKeyStore.decrypt(blob, aad = lockoutAad())
+        val aad = lockoutAad()
+        val plain = try {
+            HardwareKeyStore.decrypt(blob, aad = aad)
+        } finally {
+            aad.wipe()
+        }
         return try {
             json.decodeFromString<PinSecureData>(plain.decodeToString())
         } finally {
@@ -528,12 +583,23 @@ class PinRepositoryImpl(
 
     private fun saveData(data: PinSecureData) {
         val plain = json.encodeToString(PinSecureData.serializer(), data).encodeToByteArray()
+        val aad = lockoutAad()
         try {
-            val blob = HardwareKeyStore.encrypt(plain, aad = lockoutAad())
+            val blob = HardwareKeyStore.encrypt(plain, aad = aad)
             settingsStorage.putString(PIN_DATA_KEY, Base64.Default.encode(blob))
         } finally {
+            aad.wipe()
             plain.wipe()
         }
         gcHint()
     }
+}
+/**
+ * The subset of [SessionManager] that [PinRepositoryImpl] needs to open the
+ * database for a fresh-setup/recovery session. Extracted so the repository can
+ * be unit-tested without SQLCipher or a real driver.
+ */
+interface SessionUnlocker {
+    suspend fun unlock(dek: ByteArray): UnlockResult
+    suspend fun unlockRecreating(dek: ByteArray): Boolean
 }
