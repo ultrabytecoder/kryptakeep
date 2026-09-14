@@ -56,15 +56,20 @@ fun SetPasswordScreen(
             onValueChanged = { viewModel.onInput(it) }
         )
     }
-    val controller = rememberKeyboardController()
+    val submit: () -> Unit = {
+        if (state.isConfirming) viewModel.onConfirm() else viewModel.onContinue()
+    }
+    val controller = rememberKeyboardController(onAction = submit)
 
     DisposableEffect(Unit) {
         onDispose { passwordField.wipe() }
     }
 
     LaunchedEffect(state.isConfirming) {
+        // Clear on both entering and leaving confirm mode so the field and the
+        // ViewModel buffer stay in sync (onContinue already resets the buffer).
+        passwordField.update("")
         if (state.isConfirming) {
-            passwordField.update("")
             controller.show(passwordTarget)
         }
     }
@@ -173,13 +178,7 @@ fun SetPasswordScreen(
                         )
                     } else {
                         Button(
-                            onClick = {
-                                if (state.isConfirming) {
-                                    viewModel.onConfirm()
-                                } else {
-                                    viewModel.onContinue()
-                                }
-                            },
+                            onClick = submit,
                             enabled = !state.isConfirming || passwordField.text.isNotBlank(),
                             modifier = Modifier
                                 .fillMaxWidth()

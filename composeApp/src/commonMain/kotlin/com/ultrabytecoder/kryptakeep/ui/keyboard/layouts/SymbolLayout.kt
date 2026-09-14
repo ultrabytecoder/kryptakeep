@@ -15,8 +15,7 @@ import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
 @Composable
 fun SymbolLayout(
     modifier: Modifier = Modifier,
-    actionLabel: String = "Done",
-    onAction: (() -> Unit)? = null
+    actionLabel: String = "Done"
 ) {
     val controller = LocalKeyboardController.current
 
@@ -73,10 +72,7 @@ fun SymbolLayout(
             )
             KeyboardKey(
                 label = actionLabel,
-                onClick = {
-                    onAction?.invoke()
-                    controller?.hide()
-                },
+                onClick = { controller?.onKey(KeyCode.Action) },
                 modifier = Modifier.weight(2f)
             )
         }

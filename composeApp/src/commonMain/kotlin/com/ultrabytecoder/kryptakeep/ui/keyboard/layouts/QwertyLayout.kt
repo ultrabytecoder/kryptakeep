@@ -15,8 +15,7 @@ import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
 @Composable
 fun QwertyLayout(
     modifier: Modifier = Modifier,
-    actionLabel: String = "Done",
-    onAction: (() -> Unit)? = null
+    actionLabel: String = "Done"
 ) {
     val controller = LocalKeyboardController.current
     val isShifted = controller?.isShifted == true
@@ -83,10 +82,7 @@ fun QwertyLayout(
             )
             KeyboardKey(
                 label = actionLabel,
-                onClick = {
-                    onAction?.invoke()
-                    controller?.hide()
-                },
+                onClick = { controller?.onKey(KeyCode.Action) },
                 modifier = Modifier.weight(2f)
             )
         }

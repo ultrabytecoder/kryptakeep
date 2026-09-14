@@ -17,12 +17,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +42,10 @@ import androidx.compose.ui.unit.dp
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.KeyboardTarget
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.Eye
+import compose.icons.feathericons.EyeOff
+import kotlinx.coroutines.delay
 
 @Composable
 fun SecureOutlinedTextField(
@@ -46,6 +54,7 @@ fun SecureOutlinedTextField(
     modifier: Modifier = Modifier,
     layoutType: KeyboardLayoutType = KeyboardLayoutType.Qwerty,
     masked: Boolean = true,
+    revealable: Boolean = false,
     isError: Boolean = false,
     supportingText: @Composable (() -> Unit)? = null,
     placeholder: @Composable (() -> Unit)? = null,
@@ -73,8 +82,18 @@ fun SecureOutlinedTextField(
     // mnemonics keep their shape), so no secret character is ever rendered or
     // boxed into an un-wipeable display object beyond the platform's own
     // `target.text`.
-    val displayText = remember(target.text, masked) {
-        if (masked) target.text.map { if (it.isWhitespace()) it else '•' }.joinToString("")
+    // H13: a sensitive field can optionally reveal its content briefly (to let
+    // the user verify an unrecoverable secret); auto-hides after 5s.
+    var revealed by remember { mutableStateOf(false) }
+    LaunchedEffect(revealed) {
+        if (revealed) {
+            delay(5_000)
+            revealed = false
+        }
+    }
+    val showMask = masked && !revealed
+    val displayText = remember(target.text, showMask) {
+        if (showMask) target.text.map { if (it.isWhitespace()) it else '•' }.joinToString("")
         else target.text
     }
 
@@ -181,6 +200,18 @@ fun SecureOutlinedTextField(
 
                 if (trailingIcon != null) {
                     trailingIcon()
+                }
+                if (revealable) {
+                    IconButton(
+                        onClick = { revealed = !revealed },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (revealed) FeatherIcons.EyeOff else FeatherIcons.Eye,
+                            contentDescription = if (revealed) "Hide" else "Show",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }

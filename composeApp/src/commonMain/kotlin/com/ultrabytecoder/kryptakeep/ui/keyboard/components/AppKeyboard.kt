@@ -20,8 +20,7 @@ import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
 @Composable
 fun AppKeyboard(
     modifier: Modifier = Modifier,
-    actionLabel: String = "Done",
-    onAction: (() -> Unit)? = null
+    actionLabel: String = "Done"
 ) {
     val controller = LocalKeyboardController.current ?: return
 
@@ -48,20 +47,12 @@ fun AppKeyboard(
                 KeyboardLayoutType.Hex -> {
                     QwertyLayout(
                         actionLabel = actionLabel,
-                        onAction = {
-                            onAction?.invoke()
-                            controller.hide()
-                        },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
                 KeyboardLayoutType.Symbols -> {
                     SymbolLayout(
                         actionLabel = actionLabel,
-                        onAction = {
-                            onAction?.invoke()
-                            controller.hide()
-                        },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

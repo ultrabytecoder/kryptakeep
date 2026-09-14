@@ -76,7 +76,32 @@ fun CreateWalletSetupScreen(
         )
     }
 
-    val controller = rememberKeyboardController()
+    val nextAction: () -> Unit = {
+        if (mode == CreateWalletViewModel.Mode.GENERATE_NEW) {
+            if (walletName.isNotBlank()) onNext()
+        } else {
+            when {
+                usePassphrase && !passphraseState.matches(passphraseConfirmState) ->
+                    passphraseError = "Passphrases do not match"
+                else -> {
+                    passphraseError = null
+                    // `mnemonicChars`/`passphraseChars` are fresh copies handed to the
+                    // ViewModel, which takes ownership and wipes them in its own
+                    // coroutine — do NOT wipe them here (would race the
+                    // Dispatchers.Default write). Only scrub our own buffers.
+                    val mnemonicChars = mnemonicState.trimmedCopy()
+                    val passphraseChars =
+                        if (usePassphrase) passphraseState.toCharArray() else CharArray(0)
+                    viewModel.setPassphrase(passphraseChars)
+                    viewModel.createWalletFromMnemonic(mnemonicChars)
+                    mnemonicState.wipe()
+                    passphraseState.wipe()
+                    passphraseConfirmState.wipe()
+                }
+            }
+        }
+    }
+    val controller = rememberKeyboardController(onAction = nextAction)
 
     DisposableEffect(Unit) {
         onDispose {
@@ -236,6 +261,7 @@ fun CreateWalletSetupScreen(
                                 target = passphraseTarget,
                                 label = { Text("Passphrase") },
                                 singleLine = true,
+                                revealable = true,
                                 isError = passphraseError != null,
                                 supportingText = passphraseError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                                 modifier = Modifier.fillMaxWidth(),
@@ -248,6 +274,7 @@ fun CreateWalletSetupScreen(
                                 target = passphraseConfirmTarget,
                                 label = { Text("Confirm passphrase") },
                                 singleLine = true,
+                                revealable = true,
                                 isError = passphraseError != null,
                                 supportingText = passphraseError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                                 modifier = Modifier.fillMaxWidth(),
@@ -263,9 +290,7 @@ fun CreateWalletSetupScreen(
                 ) {
                     if (mode == CreateWalletViewModel.Mode.GENERATE_NEW) {
                         Button(
-                            onClick = {
-                                onNext()
-                            },
+                            onClick = nextAction,
                             enabled = walletName.isNotBlank(),
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp)
@@ -283,25 +308,7 @@ fun CreateWalletSetupScreen(
                         }
 
                         Button(
-                            onClick = {
-                                if (usePassphrase && !passphraseState.matches(passphraseConfirmState)) {
-                                    passphraseError = "Passphrases do not match"
-                                    return@Button
-                                }
-                                passphraseError = null
-                                // `mnemonicChars`/`passphraseChars` are fresh copies handed to
-                                // the ViewModel, which takes ownership and wipes them in its
-                                // own coroutine — do NOT wipe them here (would race the
-                                // Dispatchers.Default write). Only scrub our own buffers.
-                                val mnemonicChars = mnemonicState.trimmedCopy()
-                                val passphraseChars =
-                                    if (usePassphrase) passphraseState.toCharArray() else CharArray(0)
-                                viewModel.setPassphrase(passphraseChars)
-                                viewModel.createWalletFromMnemonic(mnemonicChars)
-                                mnemonicState.wipe()
-                                passphraseState.wipe()
-                                passphraseConfirmState.wipe()
-                            },
+                            onClick = nextAction,
                             enabled = walletName.isNotBlank()
                                 && !mnemonicState.isBlank()
                                 && (!usePassphrase || !passphraseState.isBlank())

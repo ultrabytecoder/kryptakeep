@@ -56,7 +56,8 @@ fun ChangePinScreen(
             onValueChanged = { viewModel.onPasswordInput(it) }
         )
     }
-    val controller = rememberKeyboardController()
+    val submit: () -> Unit = { viewModel.submitPasswordStage() }
+    val controller = rememberKeyboardController(onAction = submit)
 
     val isPassword = state.securityMethod == SecurityMethod.PASSWORD
     val credentialLabel = if (isPassword) "password" else "PIN"
@@ -174,9 +175,7 @@ fun ChangePinScreen(
                             Spacer(modifier = Modifier.height(16.dp))
                         } else {
                             Button(
-                                onClick = {
-                                    viewModel.submitPasswordStage()
-                                },
+                                onClick = submit,
                                 enabled = passwordField.text.isNotBlank(),
                                 modifier = Modifier
                                     .fillMaxWidth()

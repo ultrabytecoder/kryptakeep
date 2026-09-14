@@ -1,10 +1,12 @@
 package com.ultrabytecoder.kryptakeep.ui.keyboard.state
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyCode
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
@@ -16,6 +18,15 @@ data class KeyboardUiState(
     val isSymbolsActive: Boolean = false
 )
 
+/**
+ * Central state + event dispatcher for the in-app keyboard.
+ *
+ * Thread confinement: every mutator (`show`, `hide`, `onKey`, `insertChar`,
+ * `deleteChar`) writes Compose snapshot state and MUST run on the Compose/UI
+ * (main) thread. All current call sites are Compose compositions or event
+ * handlers (key clicks, tap-to-position), which already run on the UI thread —
+ * keep new call sites there as well.
+ */
 class KeyboardController(
     var onAction: (() -> Unit)? = null
 ) {
@@ -86,5 +97,12 @@ val LocalKeyboardController = compositionLocalOf<KeyboardController?> { null }
 
 @Composable
 fun rememberKeyboardController(onAction: (() -> Unit)? = null): KeyboardController {
-    return remember { KeyboardController(onAction = onAction) }
+    val controller = remember { KeyboardController() }
+    // Keep onAction in sync across recomposition (e.g. a state-dependent submit
+    // action whose captured state changes over time).
+    val onActionRef = rememberUpdatedState(onAction)
+    LaunchedEffect(controller) {
+        controller.onAction = { onActionRef.value?.invoke() }
+    }
+    return controller
 }

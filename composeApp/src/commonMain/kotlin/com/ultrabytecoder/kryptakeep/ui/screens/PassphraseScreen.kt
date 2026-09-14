@@ -41,7 +41,29 @@ fun PassphraseScreen(
             onValueChanged = { passphraseError = null }
         )
     }
-    val controller = rememberKeyboardController()
+    val continueAction: () -> Unit = {
+        when {
+            usePassphrase && !passphraseState.matches(passphraseConfirmState) ->
+                passphraseError = "Passphrases do not match"
+            usePassphrase && passphraseState.isBlank() ->
+                passphraseError = "Passphrase cannot be empty"
+            else -> {
+                passphraseError = null
+                if (usePassphrase) {
+                    // Hand off a fresh copy (the ViewModel takes ownership), then
+                    // scrub the local buffers so the passphrase does not linger on
+                    // the backstack after navigating forward.
+                    viewModel.setPassphrase(passphraseState.toCharArray())
+                    passphraseState.wipe()
+                    passphraseConfirmState.wipe()
+                } else {
+                    viewModel.clearPassphrase()
+                }
+                onNext()
+            }
+        }
+    }
+    val controller = rememberKeyboardController(onAction = continueAction)
 
     DisposableEffect(Unit) {
         onDispose {
@@ -126,6 +148,7 @@ fun PassphraseScreen(
                             target = passphraseTarget,
                             label = { Text("Passphrase") },
                             singleLine = true,
+                            revealable = true,
                             isError = passphraseError != null,
                             supportingText = passphraseError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                             modifier = Modifier.fillMaxWidth(),
@@ -138,6 +161,7 @@ fun PassphraseScreen(
                             target = passphraseConfirmTarget,
                             label = { Text("Confirm passphrase") },
                             singleLine = true,
+                            revealable = true,
                             isError = passphraseError != null,
                             supportingText = passphraseError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                             modifier = Modifier.fillMaxWidth(),
@@ -151,28 +175,7 @@ fun PassphraseScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Button(
-                        onClick = {
-                            if (usePassphrase) {
-                                if (!passphraseState.matches(passphraseConfirmState)) {
-                                    passphraseError = "Passphrases do not match"
-                                    return@Button
-                                }
-                                if (passphraseState.isBlank()) {
-                                    passphraseError = "Passphrase cannot be empty"
-                                    return@Button
-                                }
-                                passphraseError = null
-                                // Hand off a fresh copy (the ViewModel takes ownership),
-                                // then scrub the local buffers so the passphrase does not
-                                // linger in the backstack after navigating forward.
-                                viewModel.setPassphrase(passphraseState.toCharArray())
-                                passphraseState.wipe()
-                                passphraseConfirmState.wipe()
-                            } else {
-                                viewModel.clearPassphrase()
-                            }
-                            onNext()
-                        },
+                        onClick = continueAction,
                         enabled = !usePassphrase || !passphraseState.isBlank(),
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)

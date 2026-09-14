@@ -243,7 +243,8 @@ fun PinScreenEnter(
             onValueChanged = { viewModel.onPasswordInput(it) }
         )
     }
-    val controller = rememberKeyboardController()
+    val submit: () -> Unit = { viewModel.submitPassword() }
+    val controller = rememberKeyboardController(onAction = submit)
 
     val isPassword = state.securityMethod == SecurityMethod.PASSWORD
 
@@ -389,9 +390,7 @@ fun PinScreenEnter(
                             Spacer(modifier = Modifier.height(16.dp))
                         } else {
                             Button(
-                                onClick = {
-                                    viewModel.submitPassword()
-                                },
+                                onClick = submit,
                                 enabled = !state.isLocked && passwordField.text.isNotBlank(),
                                 modifier = Modifier
                                     .fillMaxWidth()
