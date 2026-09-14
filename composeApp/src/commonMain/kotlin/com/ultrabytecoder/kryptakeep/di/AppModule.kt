@@ -6,6 +6,7 @@ import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.data.PinRepositoryImpl
 import com.ultrabytecoder.kryptakeep.data.RemoteFiatQuoteProvider
 import com.ultrabytecoder.kryptakeep.data.SettingsStorage
+import com.ultrabytecoder.kryptakeep.data.SessionUnlocker
 import com.ultrabytecoder.kryptakeep.data.applyCustomNodes
 import com.ultrabytecoder.kryptakeep.domain.provider.FiatQuoteProvider
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
@@ -52,6 +53,7 @@ fun appModule(networkConfig: NetworkConfig) = module {
     single { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     single { SessionManager(platformDriverFactory(), get()) }
     single<DatabaseProvider> { get<SessionManager>() }
+    single<SessionUnlocker> { get<SessionManager>() }
 
     single<AccountRepository> { com.ultrabytecoder.kryptakeep.data.AccountRepository(get()) }
     single<UtxoRepository> { com.ultrabytecoder.kryptakeep.data.UtxoRepository(get()) }
