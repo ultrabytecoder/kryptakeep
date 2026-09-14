@@ -16,13 +16,18 @@ import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
 fun NumericNumpadLayout(
     modifier: Modifier = Modifier,
     isLocked: Boolean = false,
+    showDecimal: Boolean = false,
     onDigitClick: ((Int) -> Unit)? = null,
+    onDecimalClick: (() -> Unit)? = null,
     onDeleteClick: (() -> Unit)? = null
 ) {
     val controller = LocalKeyboardController.current
 
     val handleDigit: (Int) -> Unit = onDigitClick ?: { digit ->
         controller?.onKey(KeyCode.Digit(digit.digitToChar()))
+    }
+    val handleDecimal: () -> Unit = onDecimalClick ?: {
+        controller?.insertChar('.')
     }
     val handleDelete: () -> Unit = onDeleteClick ?: {
         controller?.onKey(KeyCode.Backspace)
@@ -64,7 +69,17 @@ fun NumericNumpadLayout(
             }
         }
         KeyboardRow {
-            Box(modifier = Modifier.weight(1f))
+            if (showDecimal) {
+                KeyboardKey(
+                    label = ".",
+                    onClick = { handleDecimal() },
+                    enabled = !isLocked,
+                    contentDescription = "Decimal point",
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                Box(modifier = Modifier.weight(1f))
+            }
             KeyboardKey(
                 label = "0",
                 onClick = { handleDigit(0) },

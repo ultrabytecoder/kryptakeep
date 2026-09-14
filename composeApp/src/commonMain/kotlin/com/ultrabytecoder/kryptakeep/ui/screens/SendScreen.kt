@@ -4,13 +4,11 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import compose.icons.FeatherIcons
@@ -29,6 +27,13 @@ import com.ultrabytecoder.kryptakeep.ui.util.formatFeeDetail
 import com.ultrabytecoder.kryptakeep.ui.util.formatFiat
 import com.ultrabytecoder.kryptakeep.ui.util.formatGwei
 import com.ultrabytecoder.kryptakeep.ui.util.parseGweiToMilliGwei
+import com.ultrabytecoder.kryptakeep.ui.keyboard.components.AppKeyboard
+import com.ultrabytecoder.kryptakeep.ui.keyboard.components.SecureOutlinedTextField
+import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
+import com.ultrabytecoder.kryptakeep.ui.keyboard.state.KeyboardTarget
+import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
+import com.ultrabytecoder.kryptakeep.ui.keyboard.state.MutableStateTarget
+import com.ultrabytecoder.kryptakeep.ui.keyboard.state.rememberKeyboardController
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.FeeSelectionMode
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SendViewModel
 
@@ -59,6 +64,45 @@ fun SendScreen(
     var ethMaxFeeText by remember { mutableStateOf(formatGwei(customEthMaxFee)) }
     var trc20FeeText by remember { mutableStateOf(customTrc20FeeLimit.toString()) }
 
+    // Custom-secure-keyboard targets. Each wraps the plain `mutableStateOf` strings
+    // above so ALL on-screen input flows through the in-app keyboard — no system IME
+    // InputConnection is ever created for these fields (no keylogger/IME side-channel).
+    // The fee setters also push the value to the ViewModel, matching the previous
+    // OutlinedTextField onValueChange behavior.
+    val addressTarget = remember { MutableStateTarget(getter = { address }, setter = { address = it }) }
+    val amountTarget = remember { MutableStateTarget(getter = { amount }, setter = { amount = it }) }
+    val btcFeeTarget = remember {
+        MutableStateTarget(
+            getter = { btcFeeText },
+            setter = { btcFeeText = it; viewModel.setCustomBtcFeeRate(it.toLongOrNull() ?: 0L) }
+        )
+    }
+    val ethPriorityTarget = remember {
+        MutableStateTarget(
+            getter = { ethPriorityText },
+            setter = {
+                ethPriorityText = it
+                viewModel.setCustomEthFees(parseGweiToMilliGwei(it) ?: 0L, parseGweiToMilliGwei(ethMaxFeeText) ?: 0L)
+            }
+        )
+    }
+    val ethMaxFeeTarget = remember {
+        MutableStateTarget(
+            getter = { ethMaxFeeText },
+            setter = {
+                ethMaxFeeText = it
+                viewModel.setCustomEthFees(parseGweiToMilliGwei(ethPriorityText) ?: 0L, parseGweiToMilliGwei(it) ?: 0L)
+            }
+        )
+    }
+    val trc20FeeTarget = remember {
+        MutableStateTarget(
+            getter = { trc20FeeText },
+            setter = { trc20FeeText = it; viewModel.setCustomTrc20FeeLimit(it.toLongOrNull() ?: 0L) }
+        )
+    }
+    val keyboardController = rememberKeyboardController()
+
     // Sync local UI text fields whenever the ViewModel custom flows update
     LaunchedEffect(customBtcFeeRate, customEthPriorityFee, customEthMaxFee, customTrc20FeeLimit) {
         btcFeeText = customBtcFeeRate.toString()
@@ -87,6 +131,9 @@ fun SendScreen(
     val launchScanner = rememberQrScannerLauncher { result ->
         if (result != null) {
             address = result
+            // Programmatic fill: park the cursor at the end so a subsequent tap+type
+            // appends rather than prepending to the scanned address.
+            addressTarget.setCursor(result.length)
         }
     }
 
@@ -132,270 +179,271 @@ fun SendScreen(
         parsedAmount.add(feeVal.totalCost)
     } else null
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Send") },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(FeatherIcons.ArrowLeft, contentDescription = "Back")
-                    }
-                },
-            )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+    CompositionLocalProvider(LocalKeyboardController provides keyboardController) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Send") },
+                    navigationIcon = {
+                        IconButton(onClick = { navController.popBackStack() }) {
+                            Icon(FeatherIcons.ArrowLeft, contentDescription = "Back")
+                        }
+                    },
+                )
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) }
+        ) { paddingValues ->
             Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                    .fillMaxSize()
+                    .padding(paddingValues),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.Start
-                    ) {
-                        Text(
-                            text = "Available Balance",
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                        Text(
-                            text = accountVal!!.amount,
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = AuroraPrimary
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = address,
-                        onValueChange = { address = it },
-                        label = { Text("Recipient Address") },
-                        placeholder = { Text("Enter or paste address") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        shape = RoundedCornerShape(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    IconButton(
-                        onClick = { launchScanner() },
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            FeatherIcons.Camera,
-                            contentDescription = "Scan QR",
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedTextField(
-                    value = amount,
-                    onValueChange = { amount = it },
-                    label = { Text("Amount") },
-                    placeholder = { Text("0.00") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    shape = RoundedCornerShape(16.dp)
-                )
-
-                // Fee selection section
-                if (showFeeSection) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    FeeSelector(
-                        selectedMode = selectedFeeMode,
-                        onSelectMode = { viewModel.setSelectedFeeMode(it) },
-                        feePresets = feePresets,
-                        customBtcFeeText = btcFeeText,
-                        onBtcFeeTextChange = { btcFeeText = it; viewModel.setCustomBtcFeeRate(it.toLongOrNull() ?: 0L) },
-                        customEthPriorityText = ethPriorityText,
-                        onEthPriorityTextChange = { ethPriorityText = it; viewModel.setCustomEthFees(parseGweiToMilliGwei(it) ?: 0L, parseGweiToMilliGwei(ethMaxFeeText) ?: 0L) },
-                        customEthMaxFeeText = ethMaxFeeText,
-                        onEthMaxFeeTextChange = { ethMaxFeeText = it; viewModel.setCustomEthFees(parseGweiToMilliGwei(ethPriorityText) ?: 0L, parseGweiToMilliGwei(it) ?: 0L) },
-                        customTrc20FeeText = trc20FeeText,
-                        onTrc20FeeTextChange = { trc20FeeText = it; viewModel.setCustomTrc20FeeLimit(it.toLongOrNull() ?: 0L) },
-                        autoFeeFallback = feeVal?.usedFallbackFees == true,
-                        accountType = accountVal!!.type,
-                        onValidate = { viewModel.validateCustomFee() },
-                        validationError = validationError
-                    )
-                }
-
-                if (feeVal != null) {
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Use the params actually applied by the provider (e.g. from Auto mode RPC query)
-                    val feeDetailLines = formatFeeDetail(feeVal.appliedParams)
-
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(20.dp),
                         border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
                         ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                     ) {
                         Column(
-                            modifier = Modifier.padding(12.dp)
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.Start
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                            Text(
+                                text = "Available Balance",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            Text(
+                                text = accountVal!!.amount,
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = AuroraPrimary
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SecureOutlinedTextField(
+                            target = addressTarget,
+                            label = { Text("Recipient Address") },
+                            placeholder = { Text("Enter or paste address") },
+                            layoutType = KeyboardLayoutType.Qwerty,
+                            masked = false,
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        IconButton(
+                            onClick = { launchScanner() },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                FeatherIcons.Camera,
+                                contentDescription = "Scan QR",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    SecureOutlinedTextField(
+                        target = amountTarget,
+                        label = { Text("Amount") },
+                        placeholder = { Text("0.00") },
+                        layoutType = KeyboardLayoutType.Numeric,
+                        supportsDecimal = true,
+                        masked = false,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp)
+                    )
+
+                    // Fee selection section
+                    if (showFeeSection) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        FeeSelector(
+                            selectedMode = selectedFeeMode,
+                            onSelectMode = { viewModel.setSelectedFeeMode(it) },
+                            feePresets = feePresets,
+                            btcFeeTarget = btcFeeTarget,
+                            ethPriorityTarget = ethPriorityTarget,
+                            ethMaxFeeTarget = ethMaxFeeTarget,
+                            trc20FeeTarget = trc20FeeTarget,
+                            autoFeeFallback = feeVal?.usedFallbackFees == true,
+                            accountType = accountVal!!.type,
+                            onValidate = { viewModel.validateCustomFee() },
+                            validationError = validationError
+                        )
+                    }
+
+                    if (feeVal != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Use the params actually applied by the provider (e.g. from Auto mode RPC query)
+                        val feeDetailLines = formatFeeDetail(feeVal.appliedParams)
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp)
                             ) {
-                                Text(
-                                    text = "Network Fee",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text(
-                                        text = feeVal?.totalCost?.toPlainString() ?: "",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                                    )
-                                    if (feeFiat != null) {
-                                        Text(
-                                            text = formatFiat(feeFiat!!, fiatCurrency.code),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                                        )
-                                    }
-                                }
-                            }
-                            if (feeDetailLines != null) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Column {
-                                    feeDetailLines.forEach { line ->
-                                        Text(
-                                            text = line,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                                        )
-                                    }
-                                }
-                            }
-                            if (total != null || totalFiat != null) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(vertical = 6.dp),
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.2f)
-                                )
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = "Total",
-                                        style = MaterialTheme.typography.titleMedium,
+                                        text = "Network Fee",
+                                        style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSecondaryContainer
                                     )
                                     Column(horizontalAlignment = Alignment.End) {
-                                        // For token accounts the crypto total is meaningless
-                                        // (token amount + native fee), show it as "—" there.
                                         Text(
-                                            text = total?.toPlainString() ?: "—",
-                                            style = MaterialTheme.typography.titleMedium,
+                                            text = feeVal?.totalCost?.toPlainString() ?: "",
+                                            style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSecondaryContainer
                                         )
-                                        if (totalFiat != null) {
+                                        if (feeFiat != null) {
                                             Text(
-                                                text = formatFiat(totalFiat!!, fiatCurrency.code),
+                                                text = formatFiat(feeFiat!!, fiatCurrency.code),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
                                             )
                                         }
                                     }
                                 }
+                                if (feeDetailLines != null) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Column {
+                                        feeDetailLines.forEach { line ->
+                                            Text(
+                                                text = line,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                            )
+                                        }
+                                    }
+                                }
+                                if (total != null || totalFiat != null) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(vertical = 6.dp),
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.2f)
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "Total",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            // For token accounts the crypto total is meaningless
+                                            // (token amount + native fee), show it as "—" there.
+                                            Text(
+                                                text = total?.toPlainString() ?: "—",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                                            )
+                                            if (totalFiat != null) {
+                                                Text(
+                                                    text = formatFiat(totalFiat!!, fiatCurrency.code),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
+
+                    if (feeErrVal != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = feeErrVal,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
 
-                if (feeErrVal != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = feeErrVal,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-
-            // Send button pinned at bottom
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-            ) {
-                Button(
-                    onClick = {
-                        if (address.isNotBlank() && amount.isNotBlank()) {
-                            // Validate custom fee before sending
-                            if (selectedFeeMode is FeeSelectionMode.Custom && !viewModel.validateCustomFee()) {
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("Please fix fee values")
-                                }
-                                return@Button
-                            }
-                            isLoading = true
-                            scope.launch {
-                                try {
-                                    val txid = viewModel.sendTransaction(address, BigDecimal.parseString(amount))
-                                    isLoading = false
-                                    navController.navigate(Screen.TransactionSent(txid)) {
-                                        popUpTo(Screen.AccountsList::class) { inclusive = false }
-                                    }
-                                } catch (e: Exception) {
-                                    isLoading = false
-                                    snackbarHostState.showSnackbar("Failed: ${e.message}")
-                                }
-                            }
-                        } else {
-                            scope.launch {
-                                snackbarHostState.showSnackbar("Please fill in all fields")
-                            }
-                        }
-                    },
+                // Send button pinned at bottom
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp),
-                    enabled = !isLoading
+                        .padding(16.dp)
                 ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    } else {
-                        Text("Send")
+                    Button(
+                        onClick = {
+                            if (address.isNotBlank() && amount.isNotBlank()) {
+                                // Validate custom fee before sending
+                                if (selectedFeeMode is FeeSelectionMode.Custom && !viewModel.validateCustomFee()) {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("Please fix fee values")
+                                    }
+                                    return@Button
+                                }
+                                isLoading = true
+                                scope.launch {
+                                    try {
+                                        val txid = viewModel.sendTransaction(address, BigDecimal.parseString(amount))
+                                        isLoading = false
+                                        navController.navigate(Screen.TransactionSent(txid)) {
+                                            popUpTo(Screen.AccountsList::class) { inclusive = false }
+                                        }
+                                    } catch (e: Exception) {
+                                        isLoading = false
+                                        snackbarHostState.showSnackbar("Failed: ${e.message}")
+                                    }
+                                }
+                            } else {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Please fill in all fields")
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                        enabled = !isLoading
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            Text("Send")
+                        }
                     }
                 }
+                AppKeyboard()
             }
         }
     }
@@ -412,14 +460,10 @@ private fun FeeSelector(
     selectedMode: FeeSelectionMode,
     onSelectMode: (FeeSelectionMode) -> Unit,
     feePresets: FeePresets?,
-    customBtcFeeText: String,
-    onBtcFeeTextChange: (String) -> Unit,
-    customEthPriorityText: String,
-    onEthPriorityTextChange: (String) -> Unit,
-    customEthMaxFeeText: String,
-    onEthMaxFeeTextChange: (String) -> Unit,
-    customTrc20FeeText: String,
-    onTrc20FeeTextChange: (String) -> Unit,
+    btcFeeTarget: KeyboardTarget,
+    ethPriorityTarget: KeyboardTarget,
+    ethMaxFeeTarget: KeyboardTarget,
+    trc20FeeTarget: KeyboardTarget,
     autoFeeFallback: Boolean,
     accountType: com.ultrabytecoder.kryptakeep.domain.model.AccountType,
     onValidate: () -> Boolean,
@@ -520,14 +564,14 @@ private fun FeeSelector(
 
     when {
         isBtc -> {
-            OutlinedTextField(
-                value = customBtcFeeText,
-                onValueChange = onBtcFeeTextChange,
+            SecureOutlinedTextField(
+                target = btcFeeTarget,
                 label = { Text("Fee Rate (sat/vB)") },
                 placeholder = { Text("10") },
-                modifier = Modifier.fillMaxWidth(),
+                layoutType = KeyboardLayoutType.Numeric,
+                masked = false,
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
                 enabled = isEditable,
                 isError = validationError != null,
                 supportingText = validationError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
@@ -535,45 +579,46 @@ private fun FeeSelector(
             )
         }
         isEth -> {
-            OutlinedTextField(
-                value = customEthPriorityText,
-                onValueChange = onEthPriorityTextChange,
+            SecureOutlinedTextField(
+                target = ethPriorityTarget,
                 label = { Text("Priority Fee (Gwei)") },
                 placeholder = { Text("25") },
-                modifier = Modifier.fillMaxWidth(),
+                layoutType = KeyboardLayoutType.Numeric,
+                supportsDecimal = true,
+                masked = false,
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth(),
                 enabled = isEditable,
                 isError = validationError != null,
                 supportingText = validationError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                 shape = RoundedCornerShape(16.dp)
             )
             Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = customEthMaxFeeText,
-                onValueChange = onEthMaxFeeTextChange,
+            SecureOutlinedTextField(
+                target = ethMaxFeeTarget,
                 label = { Text("Max Fee (Gwei)") },
                 placeholder = { Text("35") },
-                modifier = Modifier.fillMaxWidth(),
+                layoutType = KeyboardLayoutType.Numeric,
+                supportsDecimal = true,
+                masked = false,
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth(),
                 enabled = isEditable,
-                isError = validationError != null,
                 shape = RoundedCornerShape(16.dp)
             )
         }
         isTrx && !isNativeTrx -> {
-            val feeLimitSun = customTrc20FeeText.toLongOrNull() ?: 0L
+            val feeLimitSun = trc20FeeTarget.text.toLongOrNull() ?: 0L
             val feeTrxWhole = feeLimitSun / 1_000_000
             val feeTrxFrac = (feeLimitSun % 1_000_000).toString().padStart(6, '0')
-            OutlinedTextField(
-                value = customTrc20FeeText,
-                onValueChange = onTrc20FeeTextChange,
+            SecureOutlinedTextField(
+                target = trc20FeeTarget,
                 label = { Text("Fee Limit (SUN)") },
                 placeholder = { Text("35000000") },
-                modifier = Modifier.fillMaxWidth(),
+                layoutType = KeyboardLayoutType.Numeric,
+                masked = false,
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
                 enabled = isEditable,
                 isError = validationError != null,
                 supportingText = {

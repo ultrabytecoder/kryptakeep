@@ -51,7 +51,8 @@ fun AppKeyboard(
             when (controller.layoutType) {
                 KeyboardLayoutType.Numeric -> {
                     NumericNumpadLayout(
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        showDecimal = controller.supportsDecimal
                     )
                 }
                 KeyboardLayoutType.Qwerty -> {

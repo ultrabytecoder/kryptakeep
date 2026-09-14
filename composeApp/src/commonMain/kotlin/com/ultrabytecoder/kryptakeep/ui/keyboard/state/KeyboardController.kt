@@ -15,7 +15,8 @@ import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
 data class KeyboardUiState(
     val isVisible: Boolean = false,
     val layoutType: KeyboardLayoutType = KeyboardLayoutType.Qwerty,
-    val isShifted: Boolean = false
+    val isShifted: Boolean = false,
+    val supportsDecimal: Boolean = false
 )
 
 /**
@@ -42,10 +43,11 @@ class KeyboardController(
     val isShifted: Boolean get() = _state.isShifted
     // Derived from layoutType (single source of truth) so it can't drift (M1/M22).
     val isSymbolsActive: Boolean get() = layoutType == KeyboardLayoutType.Symbols
+    val supportsDecimal: Boolean get() = _state.supportsDecimal
 
-    fun show(target: KeyboardTarget, layout: KeyboardLayoutType = KeyboardLayoutType.Qwerty) {
+    fun show(target: KeyboardTarget, layout: KeyboardLayoutType = KeyboardLayoutType.Qwerty, supportsDecimal: Boolean = false) {
         activeTarget = target
-        _state = _state.copy(isVisible = true, layoutType = layout, isShifted = false)
+        _state = _state.copy(isVisible = true, layoutType = layout, isShifted = false, supportsDecimal = supportsDecimal)
     }
 
     fun showNumpad() {

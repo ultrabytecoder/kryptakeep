@@ -59,6 +59,7 @@ fun SecureOutlinedTextField(
     label: @Composable (() -> Unit)?,
     modifier: Modifier = Modifier,
     layoutType: KeyboardLayoutType = KeyboardLayoutType.Qwerty,
+    supportsDecimal: Boolean = false,
     masked: Boolean = true,
     revealable: Boolean = false,
     isError: Boolean = false,
@@ -149,7 +150,7 @@ fun SecureOutlinedTextField(
                 ) {
                     controller?.let { c ->
                         // Tap toggles: bring up this field's keyboard, or dismiss if it's up.
-                        if (c.target == target && c.isVisible) c.hide() else c.show(target, layoutType)
+                        if (c.target == target && c.isVisible) c.hide() else c.show(target, layoutType, supportsDecimal)
                     }
                 }
                 .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -199,7 +200,7 @@ fun SecureOutlinedTextField(
                                 modifier = if (singleLineField && before.isNotEmpty()) Modifier.pointerInput(Unit) {
                                     detectTapGestures { offset ->
                                         if (!enabledState.value) return@detectTapGestures
-                                        controller?.show(target, layoutType)
+                                        controller?.show(target, layoutType, supportsDecimal)
                                         val r = beforeLayout
                                         target.setCursor(if (r != null) r.getOffsetForPosition(offset) else before.length)
                                     }
@@ -217,7 +218,7 @@ fun SecureOutlinedTextField(
                                 modifier = if (singleLineField && after.isNotEmpty()) Modifier.pointerInput(Unit) {
                                     detectTapGestures { offset ->
                                         if (!enabledState.value) return@detectTapGestures
-                                        controller?.show(target, layoutType)
+                                        controller?.show(target, layoutType, supportsDecimal)
                                         val r = afterLayout
                                         target.setCursor(target.cursorIndex + (if (r != null) r.getOffsetForPosition(offset) else 0))
                                     }
