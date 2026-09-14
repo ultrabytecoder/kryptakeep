@@ -7,7 +7,7 @@ import androidx.compose.runtime.setValue
 class MutableStateTarget(
     private val getter: () -> String,
     private val setter: (String) -> Unit,
-    private val maxLength: Int = Int.MAX_VALUE,
+    override val maxLength: Int = Int.MAX_VALUE,
     override val maxLines: Int = 1,
     override val isSingleLine: Boolean = true
 ) : KeyboardTarget {
@@ -44,6 +44,4 @@ class MutableStateTarget(
     override fun moveCursor(delta: Int) {
         setCursor(cursorIndex + delta)
     }
-
-    override fun isFull(): Boolean = text.length >= maxLength
 }

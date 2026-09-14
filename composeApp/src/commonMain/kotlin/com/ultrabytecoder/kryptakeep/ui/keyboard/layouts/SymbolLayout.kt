@@ -63,7 +63,7 @@ fun SymbolLayout(
         KeyboardRow {
             KeyboardKey(
                 label = "?ABC",
-                onClick = { controller?.switchToQwerty() },
+                onClick = { controller?.onKey(KeyCode.SymbolToggle) },
                 contentDescription = "Letters",
                 modifier = Modifier.weight(1.5f)
             )

@@ -8,7 +8,7 @@ import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 
 class SecureTargetAdapter(
     private val state: SecureTextFieldState,
-    private val maxLength: Int = Int.MAX_VALUE,
+    override val maxLength: Int = Int.MAX_VALUE,
     override val maxLines: Int = 1,
     override val isSingleLine: Boolean = true,
     private val onValueChanged: (String) -> Unit = {}
@@ -54,6 +54,4 @@ class SecureTargetAdapter(
     override fun moveCursor(delta: Int) {
         setCursor(cursorIndex + delta)
     }
-
-    override fun isFull(): Boolean = state.text.length >= maxLength
 }

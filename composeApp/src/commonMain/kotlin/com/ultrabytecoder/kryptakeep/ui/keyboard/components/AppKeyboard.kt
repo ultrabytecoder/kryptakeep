@@ -42,9 +42,7 @@ fun AppKeyboard(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                KeyboardLayoutType.Qwerty,
-                KeyboardLayoutType.Mnemonic,
-                KeyboardLayoutType.Hex -> {
+                KeyboardLayoutType.Qwerty -> {
                     QwertyLayout(
                         actionLabel = actionLabel,
                         modifier = Modifier.fillMaxWidth()

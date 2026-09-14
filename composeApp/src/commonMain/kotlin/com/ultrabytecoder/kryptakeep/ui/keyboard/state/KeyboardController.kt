@@ -15,8 +15,7 @@ import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
 data class KeyboardUiState(
     val isVisible: Boolean = false,
     val layoutType: KeyboardLayoutType = KeyboardLayoutType.Qwerty,
-    val isShifted: Boolean = false,
-    val isSymbolsActive: Boolean = false
+    val isShifted: Boolean = false
 )
 
 /**
@@ -40,9 +39,8 @@ class KeyboardController(
     val isVisible: Boolean get() = _state.isVisible
     val layoutType: KeyboardLayoutType get() = _state.layoutType
     val isShifted: Boolean get() = _state.isShifted
-    val isSymbolsActive: Boolean get() = _state.isSymbolsActive
-
-    val state: KeyboardUiState get() = _state
+    // Derived from layoutType (single source of truth) so it can't drift (M1/M22).
+    val isSymbolsActive: Boolean get() = layoutType == KeyboardLayoutType.Symbols
 
     fun show(target: KeyboardTarget, layout: KeyboardLayoutType = KeyboardLayoutType.Qwerty) {
         activeTarget = target
@@ -58,10 +56,6 @@ class KeyboardController(
         activeTarget = null
     }
 
-    fun switchToQwerty() {
-        _state = _state.copy(isSymbolsActive = false, layoutType = KeyboardLayoutType.Qwerty, isShifted = false)
-    }
-
     fun onKey(key: KeyCode) {
         when (key) {
             is KeyCode.Letter -> {
@@ -74,12 +68,12 @@ class KeyboardController(
             is KeyCode.Backspace -> deleteChar()
             is KeyCode.Shift -> _state = _state.copy(isShifted = !_state.isShifted)
             is KeyCode.SymbolToggle -> {
-                val newSymbols = !_state.isSymbolsActive
-                _state = _state.copy(
-                    isSymbolsActive = newSymbols,
-                    layoutType = if (newSymbols) KeyboardLayoutType.Symbols else KeyboardLayoutType.Qwerty,
-                    isShifted = false
-                )
+                val next = if (_state.layoutType == KeyboardLayoutType.Symbols) {
+                    KeyboardLayoutType.Qwerty
+                } else {
+                    KeyboardLayoutType.Symbols
+                }
+                _state = _state.copy(layoutType = next, isShifted = false)
             }
             is KeyCode.Action -> {
                 onAction?.invoke()
