@@ -17,7 +17,6 @@ import com.ultrabytecoder.kryptakeep.security.SecureMnemonicCode
 import com.ultrabytecoder.kryptakeep.ui.keyboard.components.AppKeyboard
 import com.ultrabytecoder.kryptakeep.ui.keyboard.components.SecureOutlinedTextField
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
-import com.ultrabytecoder.kryptakeep.ui.keyboard.state.MutableStateTarget
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.SecureTargetAdapter
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.rememberKeyboardController
 import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
@@ -31,13 +30,11 @@ fun CreateWalletSetupScreen(
     onNext: () -> Unit
 ) {
     var walletName by remember { mutableStateOf(viewModel.walletNameValue) }
-    val walletNameTarget = remember {
-        MutableStateTarget(
-            getter = { walletName },
-            setter = { walletName = it; viewModel.setWalletName(it) },
-            maxLength = 50
-        )
-    }
+    // Two-step flow: step 0 = mode + wallet name (system IME, for good name entry);
+    // step 1 = mode-specific secure fields (on-screen keyboard). Splitting keeps the
+    // system keyboard and the secure keyboard from sharing a screen (which would
+    // conflict on iOS and double-show keyboards).
+    var step by remember { mutableStateOf(0) }
 
     var mnemonicError by remember { mutableStateOf<String?>(null) }
     var passphraseError by remember { mutableStateOf<String?>(null) }
@@ -129,7 +126,9 @@ fun CreateWalletSetupScreen(
                 TopAppBar(
                     title = { Text("Create Wallet") },
                     navigationIcon = {
-                        IconButton(onClick = onBack) {
+                        IconButton(onClick = {
+                            if (step == 0) onBack() else { step = 0; controller.hide() }
+                        }) {
                             Icon(FeatherIcons.ArrowLeft, contentDescription = "Back")
                         }
                     }
@@ -162,6 +161,8 @@ fun CreateWalletSetupScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
 
+                    when (step) {
+                        0 -> {
                     SegmentedSingleChoice(
                         options = listOf(
                             CreateWalletViewModel.Mode.GENERATE_NEW to "Generate new",
@@ -185,17 +186,16 @@ fun CreateWalletSetupScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    SecureOutlinedTextField(
-                        target = walletNameTarget,
+                    OutlinedTextField(
+                        value = walletName,
+                        onValueChange = { walletName = it; viewModel.setWalletName(it) },
                         label = { Text("Wallet name") },
                         singleLine = true,
-                        masked = false,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
+                        }
+                        else -> {
                     if (mode == CreateWalletViewModel.Mode.GENERATE_NEW) {
                         Text(
                             "Phrase length",
@@ -290,45 +290,61 @@ fun CreateWalletSetupScreen(
                             )
                         }
                     }
+                        }
+                    }
                 }
 
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    if (mode == CreateWalletViewModel.Mode.GENERATE_NEW) {
-                        Button(
-                            onClick = nextAction,
-                            enabled = walletName.isNotBlank(),
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Next")
+                    when (step) {
+                        0 -> {
+                            Button(
+                                onClick = { step = 1 },
+                                enabled = walletName.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Next")
+                            }
                         }
-                    } else {
-                        createError?.let {
-                            Text(
-                                it,
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                        }
+                        else -> {
+                            if (mode == CreateWalletViewModel.Mode.GENERATE_NEW) {
+                                Button(
+                                    onClick = nextAction,
+                                    enabled = walletName.isNotBlank(),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("Next")
+                                }
+                            } else {
+                                createError?.let {
+                                    Text(
+                                        it,
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
 
-                        Button(
-                            onClick = nextAction,
-                            enabled = walletName.isNotBlank()
-                                && !mnemonicState.isBlank()
-                                && (!usePassphrase || !passphraseState.isBlank())
-                                && !isCreating,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Create Wallet")
+                                Button(
+                                    onClick = nextAction,
+                                    enabled = walletName.isNotBlank()
+                                        && !mnemonicState.isBlank()
+                                        && (!usePassphrase || !passphraseState.isBlank())
+                                        && !isCreating,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("Create Wallet")
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            AppKeyboard()
                         }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    AppKeyboard()
                 }
             }
         }

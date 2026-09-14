@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ultrabytecoder.kryptakeep.ui.keyboard.layouts.NumericNumpadLayout
 import com.ultrabytecoder.kryptakeep.ui.keyboard.layouts.QwertyLayout
 import com.ultrabytecoder.kryptakeep.ui.keyboard.layouts.SymbolLayout
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
+import com.ultrabytecoder.kryptakeep.ui.keyboard.platform.blockSystemKeyboard
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
 
 @Composable
@@ -23,6 +25,16 @@ fun AppKeyboard(
     actionLabel: String = "Done"
 ) {
     val controller = LocalKeyboardController.current ?: return
+
+    // Scoped system-IME suppression: dismiss any showing system keyboard when the
+    // on-screen keyboard appears. This only composes where the secure keyboard is
+    // present, so non-secure fields elsewhere keep normal system-IME behavior. The
+    // secure fields are focusable(false) and the keyboard is touch-driven, so the
+    // system IME cannot observe secure input regardless — this is defense-in-depth.
+    DisposableEffect(controller.isVisible) {
+        if (controller.isVisible) blockSystemKeyboard()
+        onDispose { }
+    }
 
     AnimatedVisibility(
         visible = controller.isVisible,

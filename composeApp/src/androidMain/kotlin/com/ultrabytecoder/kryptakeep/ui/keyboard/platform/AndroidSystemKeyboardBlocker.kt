@@ -1,7 +1,6 @@
 package com.ultrabytecoder.kryptakeep.ui.keyboard.platform
 
 import android.app.Activity
-import android.view.WindowManager
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.lang.ref.WeakReference
@@ -21,19 +20,18 @@ object SystemKeyboardBlockerContext {
 }
 
 /**
- * Suppresses the system soft keyboard for the current activity: sets the window
- * to always-hide IME and dismisses any showing IME insets.
+ * Dismisses any currently-showing system soft keyboard for the current activity.
  *
- * Called from [MainActivity.onCreate] and re-asserted on every [onResume]
- * (config change / multi-window / dismissed dialogs can re-show the keyboard).
- * Deliberately does NOT touch decor-fits-system-windows — the activity is
- * edge-to-edge and this must not fight that.
+ * This is a one-shot, non-persistent dismiss: it does NOT set a window soft-input
+ * mode flag, so it never blocks the system IME on non-secure fields elsewhere in
+ * the app (search, send address, node URL, …). It is scoped to secure screens —
+ * invoked from [AppKeyboard] only while the on-screen keyboard is showing. The
+ * secure fields themselves are focusable(false) and the custom keyboard is
+ * touch-driven, so the system IME cannot observe secure input regardless; this is
+ * defense-in-depth against a lingering keyboard from a previous screen.
  */
 actual fun blockSystemKeyboard() {
     SystemKeyboardBlockerContext.getActivity()?.let { activity ->
-        activity.window.setSoftInputMode(
-            WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
-        )
         WindowInsetsControllerCompat(activity.window, activity.window.decorView).apply {
             hide(WindowInsetsCompat.Type.ime())
         }
