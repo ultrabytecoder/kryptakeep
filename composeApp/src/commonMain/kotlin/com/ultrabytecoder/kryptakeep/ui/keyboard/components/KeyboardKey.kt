@@ -29,15 +29,15 @@ fun KeyboardKey(
     contentDescription: String? = null
 ) {
     val containerColor = when {
+        !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
         isActive -> MaterialTheme.colorScheme.primary
-        enabled -> MaterialTheme.colorScheme.surfaceVariant
-        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        else -> MaterialTheme.colorScheme.surfaceVariant
     }
 
     val contentColor = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
         isActive -> MaterialTheme.colorScheme.onPrimary
-        enabled -> MaterialTheme.colorScheme.onSurface
-        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+        else -> MaterialTheme.colorScheme.onSurface
     }
 
     Card(

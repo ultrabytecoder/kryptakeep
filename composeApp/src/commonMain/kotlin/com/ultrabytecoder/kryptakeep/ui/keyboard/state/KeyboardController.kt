@@ -37,6 +37,7 @@ class KeyboardController(
     private var inputEnabled = true
 
     val isVisible: Boolean get() = _state.isVisible
+    val target: KeyboardTarget? get() = activeTarget
     val layoutType: KeyboardLayoutType get() = _state.layoutType
     val isShifted: Boolean get() = _state.isShifted
     // Derived from layoutType (single source of truth) so it can't drift (M1/M22).
@@ -57,6 +58,9 @@ class KeyboardController(
     }
 
     fun onKey(key: KeyCode) {
+        // Ignore key events outside an active input session — prevents shift/symbol
+        // state from drifting when no target is showing.
+        if (!isVisible || activeTarget == null) return
         when (key) {
             is KeyCode.Letter -> {
                 val char = if (_state.isShifted) key.char.uppercaseChar() else key.char.lowercaseChar()

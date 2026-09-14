@@ -117,6 +117,8 @@ fun SecureOutlinedTextField(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 56.dp + 28.dp * (minLines - 1))
+                // Deliberately out of the IME focus chain: input only flows through the
+                // on-screen keyboard, so no system input method can observe the secret.
                 .focusable(false)
                 .semantics { password() }
                 .clip(shape)
@@ -127,7 +129,10 @@ fun SecureOutlinedTextField(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) {
-                    controller?.show(target, layoutType)
+                    controller?.let { c ->
+                        // Tap toggles: bring up this field's keyboard, or dismiss if it's up.
+                        if (c.target == target && c.isVisible) c.hide() else c.show(target, layoutType)
+                    }
                 }
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             contentAlignment = Alignment.CenterStart

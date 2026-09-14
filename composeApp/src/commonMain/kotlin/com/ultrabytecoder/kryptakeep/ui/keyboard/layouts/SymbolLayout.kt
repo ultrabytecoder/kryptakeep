@@ -35,20 +35,20 @@ fun SymbolLayout(
         }
 
         KeyboardRow {
-            listOf("-", "=", "(", ")", "[", "]", "{", "}", "@", "#").forEach { symbol ->
+            listOf('-', '=', '(', ')', '[', ']', '{', '}', '@', '#').forEach { symbol ->
                 KeyboardKey(
-                    label = symbol,
-                    onClick = { controller?.insertChar(symbol[0]) },
+                    label = symbol.toString(),
+                    onClick = { controller?.insertChar(symbol) },
                     modifier = Modifier.weight(1f)
                 )
             }
         }
 
         KeyboardRow {
-            listOf("$", "^", "&", "*", "_", "+", "%", "~").forEach { symbol ->
+            listOf('$', '^', '&', '*', '_', '+', '%', '~').forEach { symbol ->
                 KeyboardKey(
-                    label = symbol,
-                    onClick = { controller?.insertChar(symbol[0]) },
+                    label = symbol.toString(),
+                    onClick = { controller?.insertChar(symbol) },
                     modifier = Modifier.weight(1f)
                 )
             }

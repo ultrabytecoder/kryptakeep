@@ -11,7 +11,7 @@ class SecureTargetAdapter(
     override val maxLength: Int = Int.MAX_VALUE,
     override val maxLines: Int = 1,
     override val isSingleLine: Boolean = true,
-    private val onValueChanged: (String) -> Unit = {}
+    private val onValueChanged: (String) -> Unit
 ) : KeyboardTarget {
     override val text: String get() = state.text
     override var cursorIndex: Int by mutableStateOf(0)

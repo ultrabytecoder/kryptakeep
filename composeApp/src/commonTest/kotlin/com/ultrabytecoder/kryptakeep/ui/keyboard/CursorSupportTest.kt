@@ -71,7 +71,7 @@ class CursorSupportTest {
     @Test
     fun secureAdapterInsertDeleteAtCursor() {
         val state = SecureTextFieldState()
-        val t = SecureTargetAdapter(state = state)
+        val t = SecureTargetAdapter(state = state, onValueChanged = {})
         t.insert('a'); t.insert('b'); t.insert('c')
         assertEquals("abc", t.text)
         t.setCursor(1)
@@ -86,7 +86,7 @@ class CursorSupportTest {
     @Test
     fun secureAdapterRespectsMaxLength() {
         val state = SecureTextFieldState()
-        val t = SecureTargetAdapter(state = state, maxLength = 2)
+        val t = SecureTargetAdapter(state = state, maxLength = 2, onValueChanged = {})
         t.insert('a'); t.insert('b'); t.insert('c')
         assertEquals("ab", t.text)
     }
@@ -94,7 +94,7 @@ class CursorSupportTest {
     @Test
     fun secureAdapterClearResetsCursor() {
         val state = SecureTextFieldState()
-        val t = SecureTargetAdapter(state = state)
+        val t = SecureTargetAdapter(state = state, onValueChanged = {})
         t.insert('a'); t.insert('b')
         t.setCursor(1)
         t.clear()

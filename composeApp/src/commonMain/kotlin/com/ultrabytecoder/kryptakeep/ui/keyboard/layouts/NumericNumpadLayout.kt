@@ -22,7 +22,7 @@ fun NumericNumpadLayout(
     val controller = LocalKeyboardController.current
 
     val handleDigit: (Int) -> Unit = onDigitClick ?: { digit ->
-        controller?.onKey(KeyCode.Digit(digit.toString()[0]))
+        controller?.onKey(KeyCode.Digit(digit.digitToChar()))
     }
     val handleDelete: () -> Unit = onDeleteClick ?: {
         controller?.onKey(KeyCode.Backspace)
