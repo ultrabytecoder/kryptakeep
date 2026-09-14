@@ -1,6 +1,7 @@
 package com.ultrabytecoder.kryptakeep.providers.tron
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
+import com.ionspin.kotlin.bignum.integer.BigInteger
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
 import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
@@ -88,12 +89,14 @@ class Trc20TokenProvider(
                 client, contractAddress,
                 "balanceOf(address)", addressHex, address
             )
-            val rawBalanceHex = resultJson["constant_result"]?.jsonArray?.getOrNull(0)?.jsonPrimitive?.content
-            val rawBalance = rawBalanceHex?.toLongOrNull(16)
+            val rawBalanceHex = resultJson["constant_result"]?.jsonArray?.getOrNull(0)?.jsonPrimitive?.content?.removePrefix("0x")?.ifEmpty { "0" }
                 ?: throw IllegalStateException("TRON RPC missing constant_result in balanceOf response")
             val decimals = fetchDecimalsWithClient(client, accountId)
-            return BigDecimal.Companion.fromLong(rawBalance)
-                .divide(BigDecimal.Companion.fromLong(10).pow(decimals))
+            // Parse the hex token units directly into a BigDecimal (arbitrary
+            // precision) instead of through Long, which overflows for large
+            // 18-decimal token balances.
+            return BigDecimal.fromBigInteger(BigInteger.parseString(rawBalanceHex, 16))
+                .divide(BigDecimal.fromLong(10).pow(decimals))
         } finally {
             client.close()
         }

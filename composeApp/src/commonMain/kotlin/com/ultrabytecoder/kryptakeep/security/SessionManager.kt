@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlin.concurrent.Volatile
 
 
 /**
@@ -82,14 +83,20 @@ class SessionManager(
 
     private val stateLock = Mutex()
 
-    // The published references are mutated only under [stateLock] and read from
-    // arbitrary worker threads via database(); the in-flight counter below is a
-    // true atomic, and on Kotlin/Native plain field writes across threads carry
-    // sequential-consistency ordering for these publish/consume paths.
+    // The published references are mutated under [stateLock] but read LOCKLESS
+    // from arbitrary worker threads via database() (which also reads the
+    // _isUnlocked StateFlow). @Volatile gives a safe publication on both JVM
+    // and Kotlin/Native: a worker that observes _isUnlocked == true is
+    // guaranteed to see the fully-published driver/database references, never
+    // a stale null (which would spuriously report "Database is locked") or a
+    // partially-visible object.
+    @Volatile
     private var dek: ByteArray? = null
 
+    @Volatile
     private var driver: SqlDriver? = null
 
+    @Volatile
     private var database: KryptaKeepDatabase? = null
 
     /**
@@ -305,62 +312,73 @@ class SessionManager(
      */
     fun lock() {
         appScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            // Mark locked first so new guarded queries fail fast, then drain the
-            // in-flight ones (awaitInFlightQueriesDrained acquires stateLock once
-            // they are done and holds it), then close under the same lock — no
-            // unlock phase can interleave between the drain and the close.
+            // Mark locked first so new guarded queries fail fast, then acquire
+            // stateLock, drain the in-flight queries, and close under the same
+            // lock — no unlock phase can interleave between the drain and the
+            // close.
             _isUnlocked.value = false
-            awaitInFlightQueriesDrained()
+            var locked = false
             try {
-                // Set the flag and do NOT reset it: the next unlock() Phase 1 will
-                // clear it. If we reset it here, an unlock() in Phase 3 (after the
-                // lock was released during Phase 2) would see lockRequested == false
-                // and publish the unlocked state, reopening the race.
+                stateLock.lock()
+                locked = true
+                // Re-assert under the lock. If unlock()'s Phase 3 published
+                // _isUnlocked=true after we set it false above but before we
+                // acquired the lock, it would otherwise survive closeInternal()
+                // below, leaving isUnlocked=true while driver/database/dek are
+                // null (isUnlocked would report true but database() would throw).
+                // Re-asserting here also keeps new queries failing fast during
+                // the drain.
+                _isUnlocked.value = false
+                // Bounded drain: wait for in-flight guarded queries to finish so
+                // the driver can be closed without yanking native SQLite handles
+                // out from under a running statement. If they do not drain within
+                // the budget, closing proceeds — hung statements are already
+                // broken by SQLCipher's own timeout handling, and refusing to
+                // lock would keep the DEK and database open indefinitely.
+                //
+                // Holding stateLock across the drain+close also preserves the
+                // invariant that close never interleaves with an unlock: a
+                // successful acquire proves no unlock()/unlockRecreating() phase
+                // is in flight. Deadlock-free by design: guarded query workers
+                // never acquire stateLock, so draining can always complete.
+                var waitedMillis = 0L
+                while (inFlightQueries.get() > 0 && waitedMillis < CLOSE_DRAIN_TIMEOUT_MS) {
+                    delay(CLOSE_DRAIN_POLL_MS)
+                    waitedMillis += CLOSE_DRAIN_POLL_MS
+                }
+                // Set the flag and do NOT reset it: the next unlock() Phase 1
+                // will clear it. If we reset it here, an unlock() in Phase 3
+                // (after the lock was released during Phase 2) would see
+                // lockRequested == false and publish the unlocked state,
+                // reopening the race.
                 lockRequested = true
                 closeInternal()
                 HardwareKeyStore.purgeCache()
                 idleJob?.cancel()
                 idleJob = null
             } finally {
-                stateLock.unlock()
+                // Unlock only if we actually acquired it. Cancellation inside
+                // stateLock.lock() (before acquisition) or at a drain suspension
+                // point must never release a mutex we do not hold — and since
+                // there is no suspension point between lock() returning and
+                // `locked = true`, the flag cannot be skipped, so the mutex is
+                // neither leaked nor double-released.
+                if (locked) stateLock.unlock()
             }
-        }
-    }
-
-    /**
-     * Waits (bounded) for [inFlightQueries] to reach zero so the driver can be
-     * closed without yanking native SQLite handles out from under a running
-     * statement. If queries do not drain within the budget, closing proceeds —
-     * hung statements are already broken by SQLCipher's own timeout handling,
-     * and refusing to lock would keep the DEK and database open indefinitely.
-     *
-     * The [stateLock] is acquired (without releasing it) once the counter drains:
-     * a successful acquire proves no unlock()/unlockRecreating() phase is in
-     * flight either — a Phase-2 driver open that completed just before the drain
-     * would otherwise have its handle closed mid-construction. Holding the mutex
-     * across the close also preserves the original invariant that close never
-     * interleaves with an unlock. Deadlock-free by design: guarded query workers
-     * never acquire [stateLock], so draining can always complete.
-     */
-    private suspend fun awaitInFlightQueriesDrained() {
-        stateLock.lock()
-        var waitedMillis = 0L
-        while (inFlightQueries.get() > 0 && waitedMillis < CLOSE_DRAIN_TIMEOUT_MS) {
-            try {
-                delay(CLOSE_DRAIN_POLL_MS)
-            } catch (e: CancellationException) {
-                stateLock.unlock()
-                throw e
-            }
-            waitedMillis += CLOSE_DRAIN_POLL_MS
         }
     }
 
     private fun closeInternal() {
         try {
-            // Close the GUARDED wrapper: it delegates to rawDriver.close(), but a
-            // stray consumer close() on the published driver can never reach the
-            // native handle — only this path (after the in-flight drain) closes.
+            // Mark the GUARDED wrapper closed FIRST, then close it. After this
+            // line any statement starting on this wrapper (a background
+            // coroutine still holding a captured database reference) fails
+            // fast in tryBeginQuery instead of reaching the native handle.
+            // Closing the wrapper delegates to rawDriver.close(); a stray
+            // consumer close() on the published driver can never reach the
+            // native handle — only this path (after the in-flight drain)
+            // closes.
+            (driver as? GuardedSqlDriver)?.markClosed()
             driver?.close()
         } catch (_: Exception) {
         }
@@ -375,7 +393,10 @@ class SessionManager(
 
     /**
      * Increments the in-flight query counter. Called by [GuardedSqlDriver] around
-     * every statement so [lock]'s drain knows when it is safe to close the driver.
+     * every statement so [lock]'s drain knows when it is safe to close the
+     * driver. Pairs with the wrapper's closed-flag gate: an increment that the
+     * wrapper rolls back (statement refused after close) is matched by an
+     * [endQuery], so the counter always returns to its pre-statement value.
      */
     fun beginQuery() {
         inFlightQueries.incrementAndGet()

@@ -1,6 +1,7 @@
 package com.ultrabytecoder.kryptakeep.providers
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
+import com.ionspin.kotlin.bignum.integer.BigInteger
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
 import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
@@ -59,10 +60,13 @@ class Erc20TokenProvider(
 
         val client = createClient()
         try {
-            val rawBalance = ethCall(client, contractAddress, data)
-                .removePrefix("0x").toLong(16)
+            val rawBalanceHex = ethCall(client, contractAddress, data).removePrefix("0x").ifEmpty { "0" }
             val decimals = fetchDecimalsWithClient(client)
-            return BigDecimal.fromLong(rawBalance).divide(BigDecimal.fromLong(10).pow(decimals))
+            // Parse the hex token units directly into a BigDecimal (arbitrary
+            // precision) instead of through Long, which overflows for large
+            // 18-decimal token balances.
+            return BigDecimal.fromBigInteger(BigInteger.parseString(rawBalanceHex, 16))
+                .divide(BigDecimal.fromLong(10).pow(decimals))
         } finally {
             client.close()
         }

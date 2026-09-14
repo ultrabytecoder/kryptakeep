@@ -4,12 +4,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.cancel
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -80,6 +84,22 @@ import com.ultrabytecoder.kryptakeep.domain.usecase.SetSecurityMethodUseCase
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.security.SessionLockNotifier
 
+/**
+ * Creates a [ViewModel] scoped to the given navigation keys and cancels its
+ * [viewModelScope] when the composable disposes (or the keys change).
+ *
+ * The ViewModels here are built with a bare remember {} and no ViewModelStore,
+ * so onCleared() would never run and the scope's coroutines (stateIn
+ * collectors, polling loops) would outlive the screen and leak. Cancelling the
+ * scope on dispose replicates the ViewModelStore cleanup.
+ */
+@Composable
+private fun <T : ViewModel> rememberDisposableViewModel(vararg keys: Any?, create: () -> T): T {
+    val viewModel = remember(*keys) { create() }
+    DisposableEffect(*keys) { onDispose { viewModel.viewModelScope.cancel() } }
+    return viewModel
+}
+
 @Composable
 fun App() {
     KryptaKeepTheme {
@@ -106,7 +126,7 @@ fun App() {
         ) {
             composable<Screen.Startup> {
                 val checkPinStatus: CheckPinStatusUseCase = koinInject()
-                val viewModel = remember { StartupViewModel(checkPinStatus) }
+                val viewModel = rememberDisposableViewModel { StartupViewModel(checkPinStatus) }
                 val currentState by viewModel.state.collectAsStateWithLifecycle()
 
                 when (currentState) {
@@ -143,7 +163,7 @@ fun App() {
             }
             composable<Screen.CreateWallet> {
                 val createWallet: CreateWalletUseCase = koinInject()
-                val viewModel = remember { CreateWalletViewModel(createWallet) }
+                val viewModel = rememberDisposableViewModel { CreateWalletViewModel(createWallet) }
 
                 CreateWalletFlow(
                     navController = navController,
@@ -165,7 +185,7 @@ fun App() {
                 val syncManager: SyncManager = koinInject()
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
                 val quoteProvider: FiatQuoteProvider = koinInject()
-                val viewModel = remember(route.walletId) {
+                val viewModel = rememberDisposableViewModel(route.walletId) {
                     AccountsListViewModel(
                         route.walletId, getAccounts, getWallets, syncUseCase, syncManager,
                         settingsStorage, quoteProvider
@@ -181,7 +201,7 @@ fun App() {
                 val transactionRepository: TransactionRepository = koinInject()
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
                 val quoteProvider: FiatQuoteProvider = koinInject()
-                val viewModel = remember(route.accountId, route.preselectedTokenId) {
+                val viewModel = rememberDisposableViewModel(route.accountId, route.preselectedTokenId) {
                     AccountDetailsViewModel(
                         route.accountId, route.preselectedTokenId, getAccounts, getAccountAddress,
                         accountRepository, transactionRepository, settingsStorage, quoteProvider
@@ -202,7 +222,7 @@ fun App() {
                 val networkConfig: com.ultrabytecoder.kryptakeep.data.NetworkConfig = koinInject()
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
                 val quoteProvider: FiatQuoteProvider = koinInject()
-                val viewModel = remember(route.accountId) {
+                val viewModel = rememberDisposableViewModel(route.accountId) {
                     SendViewModel(route.accountId, getAccounts, send, estimateFee, syncAccount,
                         accountRepository, utxoRepository, transactionRepository, keyProvider, networkConfig, settingsStorage, quoteProvider)
                 }
@@ -216,7 +236,7 @@ fun App() {
                 val route = backStackEntry.toRoute<Screen.TransactionDetails>()
                 val transactionRepository: TransactionRepository = koinInject()
                 val getAccounts: GetAccountsUseCase = koinInject()
-                val viewModel = remember(route.txId) {
+                val viewModel = rememberDisposableViewModel(route.txId) {
                     TransactionDetailsViewModel(route.txId, transactionRepository, getAccounts)
                 }
                 TransactionDetailsScreen(navController, viewModel)
@@ -227,7 +247,7 @@ fun App() {
                 val createToken: CreateTokenUseCase = koinInject()
                 val accountRepository: com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository = koinInject()
                 val networkConfig: com.ultrabytecoder.kryptakeep.data.NetworkConfig = koinInject()
-                val viewModel = remember(route.walletId) {
+                val viewModel = rememberDisposableViewModel(route.walletId) {
                     CreateAccountViewModel(route.walletId, createAccount, createToken, accountRepository, networkConfig)
                 }
                 CreateAccountScreen(navController, viewModel)
@@ -237,7 +257,7 @@ fun App() {
                 val addToken: AddTokenUseCase = koinInject()
                 val accountRepository: com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository = koinInject()
                 val networkConfig: com.ultrabytecoder.kryptakeep.data.NetworkConfig = koinInject()
-                val viewModel = remember(route.walletId) {
+                val viewModel = rememberDisposableViewModel(route.walletId) {
                     AddTokenViewModel(route.walletId, addToken, accountRepository, networkConfig)
                 }
                 AddTokenScreen(
@@ -255,7 +275,7 @@ fun App() {
                 val checkPinStatus: CheckPinStatusUseCase = koinInject()
                 val getSecurityMethod: GetSecurityMethodUseCase = koinInject()
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
-                val viewModel = remember(route.walletId) {
+                val viewModel = rememberDisposableViewModel(route.walletId) {
                     ExportMnemonicViewModel(
                         route.walletId, getMnemonic, verifyPin, checkPinStatus, getSecurityMethod, settingsStorage
                     )
@@ -266,7 +286,7 @@ fun App() {
                 val getWallets: GetWalletsUseCase = koinInject()
                 val deleteWallet: DeleteWalletUseCase = koinInject()
                 val renameWallet: RenameWalletUseCase = koinInject()
-                val viewModel = remember {
+                val viewModel = rememberDisposableViewModel {
                     ManageWalletsViewModel(getWallets, deleteWallet, renameWallet)
                 }
                 ManageWalletsScreen(navController, viewModel)
@@ -274,12 +294,12 @@ fun App() {
             composable<Screen.SetupPin> {
                 val setupPin: SetupPinUseCase = koinInject()
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
-                val viewModel = remember { SetupPinViewModel(setupPin, settingsStorage) }
+                val viewModel = rememberDisposableViewModel { SetupPinViewModel(setupPin, settingsStorage) }
                 PinScreenSetup(navController, viewModel)
             }
             composable<Screen.SetupPassword> {
                 val setupPin: SetupPinUseCase = koinInject()
-                val viewModel = remember { SetPasswordViewModel(setupPin) }
+                val viewModel = rememberDisposableViewModel { SetPasswordViewModel(setupPin) }
                 SetPasswordScreen(navController, viewModel)
             }
             composable<Screen.EnterPin> {
@@ -289,13 +309,13 @@ fun App() {
                 val checkPinStatus: CheckPinStatusUseCase = koinInject()
                 val getSecurityMethod: GetSecurityMethodUseCase = koinInject()
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
-                val viewModel = remember { EnterPinViewModel(verifyPin, getWallets, syncUseCase, checkPinStatus, getSecurityMethod, settingsStorage) }
+                val viewModel = rememberDisposableViewModel { EnterPinViewModel(verifyPin, getWallets, syncUseCase, checkPinStatus, getSecurityMethod, settingsStorage) }
                 PinScreenEnter(navController, viewModel)
             }
             composable<Screen.Settings> {
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
                 val getSecurityMethod: GetSecurityMethodUseCase = koinInject()
-                val viewModel = remember { SettingsViewModel(settingsStorage) }
+                val viewModel = rememberDisposableViewModel { SettingsViewModel(settingsStorage) }
                 val securityMethod by getSecurityMethod().collectAsStateWithLifecycle()
                 SettingsScreen(navController, viewModel, securityMethod)
             }
@@ -303,13 +323,13 @@ fun App() {
                 val changePin: ChangePinUseCase = koinInject()
                 val getSecurityMethod: GetSecurityMethodUseCase = koinInject()
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
-                val viewModel = remember { ChangePinViewModel(changePin, getSecurityMethod, settingsStorage) }
+                val viewModel = rememberDisposableViewModel { ChangePinViewModel(changePin, getSecurityMethod, settingsStorage) }
                 ChangePinScreen(navController, viewModel)
             }
             composable<Screen.CustomNodes> {
                 val settingsStorage: com.ultrabytecoder.kryptakeep.data.SettingsStorage = koinInject()
                 val networkConfig: com.ultrabytecoder.kryptakeep.data.NetworkConfig = koinInject(named("raw"))
-                val viewModel = remember { CustomNodesViewModel(settingsStorage, networkConfig) }
+                val viewModel = rememberDisposableViewModel { CustomNodesViewModel(settingsStorage, networkConfig) }
                 CustomNodesScreen(navController, viewModel)
             }
         }

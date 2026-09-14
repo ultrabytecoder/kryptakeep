@@ -48,6 +48,12 @@ internal class DesktopKeystoreProvider(
             backend.decrypt(encrypted, aad)
         } catch (e: HardwareKeyInvalidatedException) {
             throw e
+        } catch (e: HardwareKeyCorruptedException) {
+            // Must NOT be collapsed into "invalidated": a corrupted key must
+            // not be silently replaced by a fresh one (that would orphan every
+            // blob encrypted under the old key) — the caller routes to
+            // recovery instead.
+            throw e
         } catch (e: AesGcmAuthenticationException) {
             throw e
         } catch (e: Exception) {

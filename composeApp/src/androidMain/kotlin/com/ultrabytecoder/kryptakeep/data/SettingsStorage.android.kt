@@ -17,7 +17,7 @@ import androidx.security.crypto.MasterKey
  * yielded the wrapped DEK directly.
  */
 actual class SettingsStorage actual constructor(context: Any?) : SettingsStore {
-    private val prefs = (context as Context).encryptedPrefs()
+    private val prefs by lazy { (context as Context).encryptedPrefs() }
 
     actual override fun putString(key: String, value: String) {
         prefs.edit().putString(key, value).commit()

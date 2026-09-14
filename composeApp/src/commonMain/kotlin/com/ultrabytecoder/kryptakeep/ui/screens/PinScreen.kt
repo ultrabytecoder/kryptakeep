@@ -72,6 +72,14 @@ fun PinScreenSetup(
                 )
             },
             confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRecoveryDialog = false
+                        viewModel.enterRecoveryMode()
+                    }
+                ) { Text("Recover") }
+            },
+            dismissButton = {
                 TextButton(onClick = { showRecoveryDialog = false }) { Text("Cancel") }
             }
         )
@@ -129,7 +137,9 @@ fun PinScreenSetup(
                     }
                 } else {
                     Text(
-                        if (state.isConfirming) "Confirm your PIN" else "Create a PIN",
+                        if (state.isConfirming) "Confirm your PIN"
+                        else if (state.recoveryMode) "Create a PIN (recovery)"
+                        else "Create a PIN",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Medium
                     )

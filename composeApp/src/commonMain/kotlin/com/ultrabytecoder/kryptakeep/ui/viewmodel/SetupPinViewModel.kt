@@ -4,7 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ultrabytecoder.kryptakeep.data.ExistingKeyMaterialException
 import com.ultrabytecoder.kryptakeep.data.SettingsKeys
-import com.ultrabytecoder.kryptakeep.data.SettingsStorage
+import com.ultrabytecoder.kryptakeep.data.SettingsStore
 import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.domain.usecase.SetupPinUseCase
@@ -21,7 +21,14 @@ data class SetupPinState(
     val isProcessing: Boolean = false,
     val errorMessage: String? = null,
     val isLocked: Boolean = false,
-    val lockSecondsRemaining: Int = 0
+    val lockSecondsRemaining: Int = 0,
+    /**
+     * True after the user explicitly acknowledged recovery. While set, the
+     * PIN confirmed through the normal numpad flow is submitted with
+     * recoveryAcknowledged = true, so the existing key material is destroyed
+     * by design instead of being refused again.
+     */
+    val recoveryMode: Boolean = false
 )
 
 sealed class SetupPinEvent {
@@ -30,7 +37,8 @@ sealed class SetupPinEvent {
     /**
      * Existing key material was found while the lockout metadata was missing —
      * a fresh PIN would destroy the wallet. The UI must confirm recovery with
-     * the user, then re-invoke [SetupPinViewModel.confirmRecovery].
+     * the user, then call [SetupPinViewModel.enterRecoveryMode] so the
+     * re-entered PIN is submitted with recoveryAcknowledged = true.
      */
     data object RecoveryConfirmationRequired : SetupPinEvent()
 }
@@ -47,7 +55,7 @@ sealed class SetupPinEvent {
  */
 class SetupPinViewModel(
     private val setupPinUseCase: SetupPinUseCase,
-    private val settingsStorage: SettingsStorage
+    private val settingsStorage: SettingsStore
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SetupPinState())
@@ -138,21 +146,28 @@ class SetupPinViewModel(
             return
         }
 
+        // firstPin keeps its (wiped) reference so the normal re-entry flow
+        // after a refusal can copy into it again — only onCleared() releases it.
         val pinChars = first.copyOf()
         first.wipe()
         _state.update { it.copy(isProcessing = true, enteredPinLength = 0) }
         viewModelScope.launch {
             try {
-                setupPinUseCase(pinChars, SecurityMethod.PIN)
-                _state.update { it.copy(isProcessing = false) }
+                // recoveryMode is latched by enterRecoveryMode() after the user
+                // acknowledged the recovery dialog, so a re-entered PIN is
+                // submitted with recoveryAcknowledged = true and the existing
+                // key material is destroyed by design.
+                setupPinUseCase(pinChars, SecurityMethod.PIN, recoveryAcknowledged = _state.value.recoveryMode)
+                _state.update { it.copy(isProcessing = false, recoveryMode = false) }
                 _events.emit(SetupPinEvent.NavigateToCreateWallet)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: ExistingKeyMaterialException) {
                 // Key material exists but the lockout state was missing — do NOT
-                // overwrite silently. Ask the UI to confirm recovery; on confirm,
-                // call confirmRecovery(pinChars-will-be-re-entered...). The PIN
-                // buffers are wiped here; the user re-enters after confirming.
+                // overwrite silently. Ask the UI to confirm recovery; after the
+                // user acknowledges (enterRecoveryMode), the re-entered PIN is
+                // submitted with recoveryAcknowledged = true. The PIN buffers
+                // are wiped here; the user re-enters after confirming.
                 _state.update {
                     it.copy(
                         isConfirming = false,
@@ -177,26 +192,32 @@ class SetupPinViewModel(
         }
     }
 
-    /** Completes setup after the user explicitly acknowledged recovery (destroys existing key material). */
-    fun confirmRecovery(pin: CharArray) {
-        _state.update { it.copy(isProcessing = true) }
-        viewModelScope.launch {
-            try {
-                setupPinUseCase(pin, SecurityMethod.PIN, recoveryAcknowledged = true)
-                _state.update { it.copy(isProcessing = false) }
-                _events.emit(SetupPinEvent.NavigateToCreateWallet)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _state.update {
-                    it.copy(
-                        isConfirming = false,
-                        isProcessing = false,
-                        enteredPinLength = 0,
-                        errorMessage = e.message ?: "Failed to set PIN"
-                    )
-                }
-            }
+    /**
+     * Enters the acknowledged-recovery flow: the user has confirmed that the
+     * existing key material may be destroyed. The next PIN confirmed through
+     * the normal numpad flow is submitted with recoveryAcknowledged = true
+     * (destroys existing key material by design). Buffers are wiped so the
+     * user re-enters a fresh PIN.
+     */
+    fun enterRecoveryMode() {
+        val s = _state.value
+        if (s.isProcessing) return
+        // Wipe and re-allocate fresh wipe-able buffers: the user re-enters a
+        // brand-new PIN through the normal numpad flow (addDigit requires
+        // non-null buffers).
+        firstPin?.wipe()
+        buffer?.wipe()
+        firstPin = CharArray(s.pinLength)
+        buffer = CharArray(s.pinLength)
+        bufferLength = 0
+        _state.update {
+            it.copy(
+                isConfirming = false,
+                isProcessing = false,
+                enteredPinLength = 0,
+                errorMessage = null,
+                recoveryMode = true
+            )
         }
     }
 

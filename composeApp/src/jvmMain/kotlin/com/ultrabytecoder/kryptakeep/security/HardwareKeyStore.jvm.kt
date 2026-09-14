@@ -12,11 +12,11 @@ import javax.crypto.spec.SecretKeySpec
  *
  * The key comes from [KeystoreProvider]: on Android that is the Android
  * Keystore (hardware-backed, the key never leaves the Keystore); on the
- * desktop target there is no Keystore, so the provider reports "no Keystore"
- * and an in-memory AES-256 key for the process lifetime is used instead. The
- * in-memory fallback preserves the security semantics the tests exercise
- * (a stable key, GCM authentication, AAD binding, and a missing-key error
- * after [deleteKey]) without any Android API.
+ * desktop target the provider delegates the whole encrypt/decrypt/delete
+ * lifecycle to an OS key store (DPAPI / Secure Enclave / libsecret / file), so
+ * the device key persists across restarts. The [fallbackKey] in-memory key is
+ * only used on a platform whose provider reports "no Keystore" and does not
+ * handle blob operations.
  *
  * Concurrency: [keyLock] is the SINGLE lock for the whole object — it guards
  * the provider resolution, the fallback key, AND is passed into the provider so
@@ -175,8 +175,10 @@ actual object HardwareKeyStore {
 
 /**
  * Selects the platform [KeystoreProvider]. Android returns the Android Keystore
- * implementation; the desktop target uses the base implementation, which reports
- * "no Keystore" and routes [HardwareKeyStore] to the in-memory fallback.
+ * implementation; the desktop target returns a [DesktopKeystoreProvider] that
+ * delegates blob operations to an OS backend (DPAPI / Secure Enclave /
+ * libsecret / file — see KeystoreProvider.desktop.kt), so the device key
+ * persists across restarts instead of dying with the process.
  *
  * [lock] is the caller's monitor, passed in so the provider synchronizes on the
  * SAME lock as [HardwareKeyStore] (single-lock design — no nested-lock hazard).
@@ -185,9 +187,8 @@ internal expect fun createKeystoreProvider(lock: Any): KeystoreProvider
 
 /**
  * Platform hook for the hardware-backed key. Android subclasses this with the
- * Android Keystore; the desktop target uses the base implementation (all
- * methods report "no Keystore"), which routes [HardwareKeyStore] to the
- * in-memory fallback.
+ * Android Keystore; the desktop target subclasses it with a blob-handling
+ * provider (handlesBlobOperations() = true) that delegates to an OS key store.
  *
  * All methods synchronize on [lock] (the monitor supplied by
  * [HardwareKeyStore]), so the provider and its caller share one lock.

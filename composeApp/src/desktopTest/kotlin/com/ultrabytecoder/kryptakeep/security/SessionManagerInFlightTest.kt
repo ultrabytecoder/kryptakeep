@@ -24,10 +24,11 @@ import kotlin.test.assertTrue
  */
 class SessionManagerInFlightTest {
 
-    /** SqlDriver fake: counts closes; optionally blocks inside a query execution. */
+    /** SqlDriver fake: counts closes and delegate query calls; optionally blocks inside a query execution. */
     private class FakeDriver(private val blockQueryMillis: Long = 0) : SqlDriver {
         val closeCount = java.util.concurrent.atomic.AtomicInteger(0)
         val queryEntered = CountDownLatch(1)
+        val delegateQueryCount = java.util.concurrent.atomic.AtomicInteger(0)
 
         override fun <R> executeQuery(
             identifier: Int?,
@@ -36,8 +37,12 @@ class SessionManagerInFlightTest {
             parameters: Int,
             binders: (SqlPreparedStatement.() -> Unit)?
         ): QueryResult<R> {
+            delegateQueryCount.incrementAndGet()
             queryEntered.countDown()
-            if (blockQueryMillis > 0) Thread.sleep(blockQueryMillis)
+            // Only the test's "SELECT 1" query blocks — the unlock probe
+            // (PRAGMA user_version) must stay fast so unlock() is not
+            // delayed and the latch reflects the test query only.
+            if (blockQueryMillis > 0 && sql == "SELECT 1") Thread.sleep(blockQueryMillis)
             return mapper(EmptyCursor)
         }
 
@@ -102,6 +107,7 @@ class SessionManagerInFlightTest {
                         queryDone.countDown()
                     }
                 }
+                val tStart = System.currentTimeMillis()
                 t.start()
                 assertTrue(raw.queryEntered.await(2, TimeUnit.SECONDS), "query must enter the driver")
 
@@ -130,5 +136,86 @@ class SessionManagerInFlightTest {
         val factory = FakeFactory(FakeDriver())
         val manager = SessionManager(factory, CoroutineScope(Dispatchers.Default))
         assertFailsWith<IllegalStateException> { manager.database() }
+    }
+
+    @Test
+    fun lockForcesCloseWhenQueryOutlivesDrainBudget() {
+        kotlinx.coroutines.runBlocking {
+            // Blocks far longer than the 500ms drain budget: the lock must
+            // stop waiting and force-close, rather than drain unbounded.
+            val raw = FakeDriver(blockQueryMillis = 3000)
+            val factory = FakeFactory(raw)
+            val scope = CoroutineScope(Dispatchers.Default)
+            val manager = SessionManager(factory, scope)
+
+            try {
+                assertEquals(UnlockResult.Success, manager.unlock(ByteArray(32)))
+                val guarded = GuardedSqlDriver(raw, manager)
+
+                val queryDone = CountDownLatch(1)
+                val t = Thread {
+                    try {
+                        guarded.executeQuery(null, "SELECT 1", { QueryResult.Value(Unit) }, 0)
+                    } finally {
+                        queryDone.countDown()
+                    }
+                }
+                val tStart = System.currentTimeMillis()
+                t.start()
+                assertTrue(raw.queryEntered.await(2, TimeUnit.SECONDS), "query must enter the driver")
+
+                // A bounded drain closes at ~500ms of nominal budget; an
+                // unbounded drain would close only after the full 3000ms
+                // block. The 1800ms deadline sits between the two, so it
+                // distinguishes them even under CI scheduling jitter.
+                manager.lock()
+                val deadline = tStart + 1800
+                while (closeCountOf(raw) == 0 && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(20)
+                }
+                assertTrue(
+                    closeCountOf(raw) >= 1,
+                    "driver must be force-closed after the drain budget expires, without waiting for the slow query"
+                )
+                assertEquals(false, manager.isUnlocked.value)
+
+                // The slow query still completes on the fake (a real driver
+                // would fail it); its endQuery must not leak the counter.
+                assertTrue(queryDone.await(6, TimeUnit.SECONDS), "in-flight query must complete")
+                t.join(6000)
+            } finally {
+                scope.cancel()
+            }
+        }
+    }
+
+    @Test
+    fun queryStartingAfterCloseFailsFastWithoutReachingDelegate() {
+        val raw = FakeDriver()
+        val factory = FakeFactory(raw)
+        val manager = SessionManager(factory, CoroutineScope(Dispatchers.Default))
+        val guarded = GuardedSqlDriver(raw, manager)
+
+        // Before the close, statements reach the delegate as usual.
+        guarded.executeQuery(null, "SELECT 1", { QueryResult.Value(Unit) }, 0)
+        assertEquals(1, raw.delegateQueryCount.get(), "open driver must receive statements")
+
+        // SessionManager.closeInternal() marks the wrapper closed before the
+        // delegate is closed. A statement that starts AFTER the close (a
+        // background coroutine still holding a captured database reference)
+        // must fail fast with a typed error and never reach the closed
+        // delegate (freed native handle).
+        guarded.markClosed()
+        assertFailsWith<IllegalStateException> {
+            guarded.executeQuery(null, "SELECT 1", { QueryResult.Value(Unit) }, 0)
+        }
+        assertFailsWith<IllegalStateException> {
+            guarded.execute(null, "DELETE FROM t", 0, null)
+        }
+        assertEquals(
+            1,
+            raw.delegateQueryCount.get(),
+            "closed driver must not receive new statements"
+        )
     }
 }

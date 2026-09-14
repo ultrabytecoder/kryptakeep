@@ -142,6 +142,10 @@ class KeyManager(
      *
      * @throws HardwareKeyInvalidatedException when the device hardware key is
      * missing/invalidated — the caller must route to recovery (PIN re-setup).
+     * @throws HardwareKeyCorruptedException when the device hardware key is
+     * present but malformed (e.g. a truncated key file) — the caller must
+     * route to recovery as well; a corrupted key must never be silently
+     * replaced, or data encrypted under the old key would be orphaned.
      */
     fun unwrapDekWithPin(pin: CharArray, method: SecurityMethod): ByteArray? {
         val envelope = try {
@@ -174,6 +178,10 @@ class KeyManager(
             salt = try {
                 HardwareKeyStore.decrypt(saltBlob)
             } catch (e: HardwareKeyInvalidatedException) {
+                throw e
+            } catch (e: HardwareKeyCorruptedException) {
+                // Propagate distinctly: a corrupted device key must route to
+                // recovery and must NOT be silently replaced with a fresh one.
                 throw e
             } catch (e: AesGcmAuthenticationException) {
                 throw HardwareKeyInvalidatedException("Hardware key mismatch with stored salt")

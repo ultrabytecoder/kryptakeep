@@ -76,8 +76,10 @@ class TrxProvider(
             }
             val body = response.body<String>()
             val json = Json.parseToJsonElement(body).jsonObject
-            val balanceSun = json["balance"]?.jsonPrimitive?.long ?: 0L
-            return BigDecimal.fromLong(balanceSun)
+            val balanceSunStr = json["balance"]?.jsonPrimitive?.content ?: "0"
+            // Parse the decimal sun value directly into a BigDecimal instead of
+            // through Long, which would overflow above 2^63 sun.
+            return BigDecimal.parseString(balanceSunStr)
         } finally {
             client.close()
         }

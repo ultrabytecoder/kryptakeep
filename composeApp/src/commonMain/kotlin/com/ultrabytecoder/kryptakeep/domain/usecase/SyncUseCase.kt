@@ -7,6 +7,7 @@ import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
 import com.ultrabytecoder.kryptakeep.domain.service.KeyProvider
 import com.ultrabytecoder.kryptakeep.providers.ProviderFactory
 import com.ultrabytecoder.kryptakeep.providers.SyncMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -36,6 +37,10 @@ class SyncUseCase(
                             val provider = ProviderFactory.create(account.type, masterSeed, utxoRepository, accountRepository, transactionRepository, networkConfig, account.params)
                             provider.sync(account.id, syncMode)
                         }
+                    } catch (e: CancellationException) {
+                        // Propagate cancellation — never treat a cancelled sync as a
+                        // failed one (which would surface a misleading error).
+                        throw e
                     } catch (e: Exception) {
                         println("Sync failed for account ${account.id}: ${e.message}")
                     } finally {

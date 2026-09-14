@@ -37,8 +37,14 @@ class RemoteFiatQuoteProvider(
     }
 
     private suspend fun ensureLoaded(): Map<String, Double> = lock.withLock {
-        if (cache.isNotEmpty() && clock() - loadedAt < ttlMillis) return@withLock cache
+        val now = clock()
+        // Back off on EVERY attempt (success or failure) so a down/unreachable
+        // endpoint is not hammered: within the TTL of the last attempt we serve the
+        // current cache as-is (stale values are preferred over none; an empty cache
+        // simply falls through to the fallback provider in getPrice).
+        if (now - loadedAt < ttlMillis) return@withLock cache
 
+        loadedAt = now
         try {
             val response = client.get("${networkConfig.exchangeRateApiBase}/api/v1/rates")
             if (response.status == HttpStatusCode.OK) {
@@ -53,7 +59,6 @@ class RemoteFiatQuoteProvider(
                     .toMap()
                 if (parsed.isNotEmpty()) {
                     cache = parsed
-                    loadedAt = clock()
                 }
             }
         } catch (e: Exception) {

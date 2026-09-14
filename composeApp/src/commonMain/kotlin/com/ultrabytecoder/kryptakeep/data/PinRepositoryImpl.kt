@@ -9,6 +9,7 @@ import com.ultrabytecoder.kryptakeep.domain.repository.VerifyResult
 import com.ultrabytecoder.kryptakeep.domain.usecase.CredentialValidator
 import com.ultrabytecoder.kryptakeep.security.AesGcmAuthenticationException
 import com.ultrabytecoder.kryptakeep.security.gcHint
+import com.ultrabytecoder.kryptakeep.security.HardwareKeyCorruptedException
 import com.ultrabytecoder.kryptakeep.security.HardwareKeyInvalidatedException
 import com.ultrabytecoder.kryptakeep.security.HardwareKeyStore
 import com.ultrabytecoder.kryptakeep.security.KeyManager
@@ -218,6 +219,11 @@ class PinRepositoryImpl(
     override suspend fun verifyPin(pin: CharArray): VerifyResult = withContext(Dispatchers.Default) {
         mutex.withLock {
             var dek: ByteArray? = null
+            // True once SessionManager has taken ownership of the unwrapped DEK
+            // (only on UnlockResult.Success). On every other exit path the DEK must
+            // be wiped — including on CancellationException and unexpected Errors —
+            // so it is never left in a local for the GC to collect.
+            var sessionOwnsDek = false
 
             try {
             val result: VerifyResult = when (val gate = loadLockoutGate()) {
@@ -237,6 +243,12 @@ class PinRepositoryImpl(
                     } catch (e: HardwareKeyInvalidatedException) {
                         hwInvalidated = true
                         null
+                    } catch (e: HardwareKeyCorruptedException) {
+                        // A corrupted (not missing) device key routes to
+                        // recovery the same way; it must never be silently
+                        // replaced.
+                        hwInvalidated = true
+                        null
                     }
 
                     if (hwInvalidated) {
@@ -249,6 +261,7 @@ class PinRepositoryImpl(
                     } else if (dek != null) {
                         when (val result = sessionManager.unlock(dek)) {
                             is UnlockResult.Success -> {
+                                sessionOwnsDek = true
                                 val resetData = gate.data.copy(
                                     failedAttempts = 0,
                                     lockedUntil = 0L,
@@ -292,19 +305,16 @@ class PinRepositoryImpl(
                     }
                 }
             }
-            // Wipe the unwrapped DEK unless the session took ownership of it
-            // (VerifyResult.Success hands the key over to SessionManager).
-            if (result !is VerifyResult.Success) {
-                dek?.wipe()
-            }
 
             result
-            } catch (e: CancellationException) {
-                // The coroutine was cancelled mid-verify (e.g. while sessionManager
-                // .unlock held the state lock). Wipe the unwrapped DEK before
-                // propagating so it is never left in a local for the GC to collect.
-                dek?.wipe()
-                throw e
+            } finally {
+                // Wipe the unwrapped DEK on every exit path (normal return,
+                // CancellationException, or an unexpected Error) unless the session
+                // took ownership of it on Success — it is then wiped by lock().
+                if (!sessionOwnsDek) {
+                    dek?.wipe()
+                    dek = null
+                }
             }
         }
     }
@@ -331,6 +341,10 @@ class PinRepositoryImpl(
                         try {
                             oldDek = keyManager.unwrapDekWithPin(oldPin, oldMethod)
                         } catch (e: HardwareKeyInvalidatedException) {
+                            return@withLock ChangePinResult.Failed("PIN data is corrupted. Recovery required.")
+                        } catch (e: HardwareKeyCorruptedException) {
+                            // Corrupted device key (present but malformed) —
+                            // route to recovery, never silently replace.
                             return@withLock ChangePinResult.Failed("PIN data is corrupted. Recovery required.")
                         }
 
