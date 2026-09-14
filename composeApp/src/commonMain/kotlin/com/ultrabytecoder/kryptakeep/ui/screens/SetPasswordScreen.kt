@@ -67,15 +67,11 @@ fun SetPasswordScreen(
     }
 
     LaunchedEffect(state.isConfirming) {
-        // Clear on both entering and leaving confirm mode so the field and the
-        // ViewModel buffer stay in sync (onContinue already resets the buffer).
+        // Clear on entering and leaving confirm mode so the field and the
+        // ViewModel buffer stay in sync (onContinue already resets the buffer),
+        // and (re)show the keyboard. Collapsed from a separate LaunchedEffect(Unit)
+        // show to avoid a redundant double-show on entry (M12).
         passwordField.update("")
-        if (state.isConfirming) {
-            controller.show(passwordTarget)
-        }
-    }
-
-    LaunchedEffect(Unit) {
         controller.show(passwordTarget)
     }
 

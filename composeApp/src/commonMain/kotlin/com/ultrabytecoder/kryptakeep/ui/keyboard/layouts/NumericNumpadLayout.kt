@@ -75,6 +75,7 @@ fun NumericNumpadLayout(
                 label = "⌫",
                 onClick = { handleDelete() },
                 enabled = !isLocked,
+                contentDescription = "Delete",
                 modifier = Modifier.weight(1f)
             )
         }

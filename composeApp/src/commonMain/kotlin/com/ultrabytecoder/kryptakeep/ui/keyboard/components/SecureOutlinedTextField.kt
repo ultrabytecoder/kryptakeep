@@ -37,6 +37,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.password
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
@@ -102,6 +104,9 @@ fun SecureOutlinedTextField(
     var beforeLayout: TextLayoutResult? by remember { mutableStateOf<TextLayoutResult?>(null) }
     var afterLayout: TextLayoutResult? by remember { mutableStateOf<TextLayoutResult?>(null) }
     val enabledState = rememberUpdatedState(enabled)
+    // singleLine forces a single line (caps maxLines); minLines grows the min
+    // height so multi-line fields (mnemonic) reserve room before scrolling.
+    val effectiveMaxLines = if (singleLine) 1 else maxLines
 
     Column(modifier = modifier) {
         label?.let {
@@ -111,8 +116,9 @@ fun SecureOutlinedTextField(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 56.dp)
+                .heightIn(min = 56.dp + 28.dp * (minLines - 1))
                 .focusable(false)
+                .semantics { password() }
                 .clip(shape)
                 .border(BorderStroke(borderWidth, borderColor), shape)
                 .background(MaterialTheme.colorScheme.surface, shape)
@@ -139,7 +145,7 @@ fun SecureOutlinedTextField(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .then(if (maxLines > 1) Modifier.verticalScroll(rememberScrollState()) else Modifier),
+                        .then(if (effectiveMaxLines > 1) Modifier.verticalScroll(rememberScrollState()) else Modifier),
                     contentAlignment = Alignment.CenterStart
                 ) {
                     if (target.text.isEmpty() && placeholder != null) {
@@ -151,7 +157,7 @@ fun SecureOutlinedTextField(
                         // between the two runs so the caret sits exactly on the index.
                         // Single-line fields support tap-to-position; multi-line keeps
                         // the caret at the end (insert/delete still occur at the cursor).
-                        val singleLineField = maxLines == 1
+                        val singleLineField = effectiveMaxLines == 1
                         val text = displayText
                         val cursor = target.cursorIndex.coerceIn(0, text.length)
                         val before = text.substring(0, cursor)
@@ -165,7 +171,7 @@ fun SecureOutlinedTextField(
                                 text = before,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = contentColor,
-                                maxLines = maxLines,
+                                maxLines = effectiveMaxLines,
                                 onTextLayout = { beforeLayout = it },
                                 modifier = if (singleLineField && before.isNotEmpty()) Modifier.pointerInput(Unit) {
                                     detectTapGestures { offset ->
@@ -183,7 +189,7 @@ fun SecureOutlinedTextField(
                                 text = after,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = contentColor,
-                                maxLines = maxLines,
+                                maxLines = effectiveMaxLines,
                                 onTextLayout = { afterLayout = it },
                                 modifier = if (singleLineField && after.isNotEmpty()) Modifier.pointerInput(Unit) {
                                     detectTapGestures { offset ->

@@ -52,6 +52,7 @@ fun QwertyLayout(
                 label = "⇧",
                 onClick = { controller?.onKey(KeyCode.Shift) },
                 isActive = isShifted,
+                contentDescription = "Shift",
                 modifier = Modifier.weight(1.5f)
             )
             listOf('z', 'x', 'c', 'v', 'b', 'n', 'm').forEach { char ->
@@ -65,6 +66,7 @@ fun QwertyLayout(
             KeyboardKey(
                 label = "⌫",
                 onClick = { controller?.onKey(KeyCode.Backspace) },
+                contentDescription = "Delete",
                 modifier = Modifier.weight(1.5f)
             )
         }
@@ -73,6 +75,7 @@ fun QwertyLayout(
             KeyboardKey(
                 label = "?123",
                 onClick = { controller?.onKey(KeyCode.SymbolToggle) },
+                contentDescription = "Symbols",
                 modifier = Modifier.weight(1.5f)
             )
             KeyboardKey(

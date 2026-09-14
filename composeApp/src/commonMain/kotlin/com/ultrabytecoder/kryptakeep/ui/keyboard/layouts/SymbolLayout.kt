@@ -55,6 +55,7 @@ fun SymbolLayout(
             KeyboardKey(
                 label = "⌫",
                 onClick = { controller?.onKey(KeyCode.Backspace) },
+                contentDescription = "Delete",
                 modifier = Modifier.weight(2f)
             )
         }
@@ -63,6 +64,7 @@ fun SymbolLayout(
             KeyboardKey(
                 label = "?ABC",
                 onClick = { controller?.switchToQwerty() },
+                contentDescription = "Letters",
                 modifier = Modifier.weight(1.5f)
             )
             KeyboardKey(

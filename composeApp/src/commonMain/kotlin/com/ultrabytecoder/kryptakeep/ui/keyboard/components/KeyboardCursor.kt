@@ -3,8 +3,8 @@ package com.ultrabytecoder.kryptakeep.ui.keyboard.components
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -25,12 +25,8 @@ fun KeyboardCursor(
         initialValue = 1f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 1000
-                1f at 500
-                0f at 500
-            },
-            repeatMode = RepeatMode.Restart
+            animation = tween(500),
+            repeatMode = RepeatMode.Reverse
         )
     )
 

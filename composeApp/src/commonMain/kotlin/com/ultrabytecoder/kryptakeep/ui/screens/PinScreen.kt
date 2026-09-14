@@ -345,7 +345,11 @@ fun PinScreenEnter(
 
                     Spacer(modifier = Modifier.height(32.dp))
 
-                    if (isPassword) {
+                    if (state.securityMethod == null) {
+                        // Method not loaded yet — avoid flashing the PIN dots for a
+                        // password-method user before it switches (M13).
+                        Spacer(modifier = Modifier.height(32.dp))
+                    } else if (isPassword) {
                         SecureOutlinedTextField(
                             target = passwordTarget,
                             label = { Text("Password") },
