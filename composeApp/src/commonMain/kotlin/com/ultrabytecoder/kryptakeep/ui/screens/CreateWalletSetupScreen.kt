@@ -7,8 +7,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import compose.icons.FeatherIcons
@@ -33,8 +35,10 @@ fun CreateWalletSetupScreen(
     // Two-step flow: step 0 = mode + wallet name (system IME, for good name entry);
     // step 1 = mode-specific secure fields (on-screen keyboard). Splitting keeps the
     // system keyboard and the secure keyboard from sharing a screen (which would
-    // conflict on iOS and double-show keyboards).
-    var step by remember { mutableStateOf(0) }
+    // conflict on iOS and double-show keyboards). rememberSaveable so a mid-flow
+    // rotation / config change doesn't kick the user back to step 0.
+    var step by rememberSaveable { mutableStateOf(0) }
+    val focusManager = LocalFocusManager.current
 
     var mnemonicError by remember { mutableStateOf<String?>(null) }
     var passphraseError by remember { mutableStateOf<String?>(null) }
@@ -126,9 +130,12 @@ fun CreateWalletSetupScreen(
                 TopAppBar(
                     title = { Text("Create Wallet") },
                     navigationIcon = {
-                        IconButton(onClick = {
-                            if (step == 0) onBack() else { step = 0; controller.hide() }
-                        }) {
+                        IconButton(
+                            onClick = {
+                                if (step == 0) onBack() else { step = 0; controller.hide() }
+                            },
+                            enabled = !isCreating
+                        ) {
                             Icon(FeatherIcons.ArrowLeft, contentDescription = "Back")
                         }
                     }
@@ -301,7 +308,14 @@ fun CreateWalletSetupScreen(
                     when (step) {
                         0 -> {
                             Button(
-                                onClick = { step = 1 },
+                                onClick = {
+                                    // Clear focus on the wallet-name field so the system IME
+                                    // is dismissed (Android can leave it orphaned when the
+                                    // focused field leaves composition without explicit focus
+                                    // clearing), before showing the secure-keyboard step.
+                                    focusManager.clearFocus()
+                                    step = 1
+                                },
                                 enabled = walletName.isNotBlank(),
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp)
