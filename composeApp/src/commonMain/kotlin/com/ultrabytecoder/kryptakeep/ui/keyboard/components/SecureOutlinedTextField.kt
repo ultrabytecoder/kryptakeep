@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,11 +23,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.KeyboardTarget
@@ -70,6 +77,12 @@ fun SecureOutlinedTextField(
         if (masked) target.text.map { if (it.isWhitespace()) it else '•' }.joinToString("")
         else target.text
     }
+
+    // Per-Text layouts, used to map a tap on the (split) content to a character
+    // index for tap-to-position cursor placement (single-line fields only).
+    var beforeLayout: TextLayoutResult? by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var afterLayout: TextLayoutResult? by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val enabledState = rememberUpdatedState(enabled)
 
     Column(modifier = modifier) {
         label?.let {
@@ -115,19 +128,53 @@ fun SecureOutlinedTextField(
                             placeholder()
                         }
                     } else {
+                        // Split the display text at the cursor and render the caret
+                        // between the two runs so the caret sits exactly on the index.
+                        // Single-line fields support tap-to-position; multi-line keeps
+                        // the caret at the end (insert/delete still occur at the cursor).
+                        val singleLineField = maxLines == 1
+                        val text = displayText
+                        val cursor = target.cursorIndex.coerceIn(0, text.length)
+                        val before = text.substring(0, cursor)
+                        val after = text.substring(cursor)
+                        val contentColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = displayText,
+                                text = before,
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                                maxLines = maxLines
+                                color = contentColor,
+                                maxLines = maxLines,
+                                onTextLayout = { beforeLayout = it },
+                                modifier = if (singleLineField && before.isNotEmpty()) Modifier.pointerInput(Unit) {
+                                    detectTapGestures { offset ->
+                                        if (!enabledState.value) return@detectTapGestures
+                                        controller?.show(target, layoutType)
+                                        val r = beforeLayout
+                                        target.setCursor(if (r != null) r.getOffsetForPosition(offset) else before.length)
+                                    }
+                                } else Modifier
                             )
                             if (isActive) {
                                 KeyboardCursor()
                             }
+                            Text(
+                                text = after,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = contentColor,
+                                maxLines = maxLines,
+                                onTextLayout = { afterLayout = it },
+                                modifier = if (singleLineField && after.isNotEmpty()) Modifier.pointerInput(Unit) {
+                                    detectTapGestures { offset ->
+                                        if (!enabledState.value) return@detectTapGestures
+                                        controller?.show(target, layoutType)
+                                        val r = afterLayout
+                                        target.setCursor(target.cursorIndex + (if (r != null) r.getOffsetForPosition(offset) else 0))
+                                    }
+                                } else Modifier
+                            )
                         }
                     }
                 }
