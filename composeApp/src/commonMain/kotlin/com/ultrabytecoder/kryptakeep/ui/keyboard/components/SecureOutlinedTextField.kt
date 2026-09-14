@@ -26,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +42,9 @@ import androidx.compose.ui.semantics.password
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.KeyboardTarget
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
@@ -70,6 +74,20 @@ fun SecureOutlinedTextField(
 ) {
     val controller = LocalKeyboardController.current
     val isActive = controller?.isVisible == true && controller.activeTarget == target
+
+    // H9: wipe this field's buffer when the app is backgrounded (ON_STOP). Bound to
+    // the FIELD (not the keyboard), so it fires even when the on-screen keyboard has
+    // been dismissed and the controller no longer holds an active target. Per-screen
+    // dispose wipes cover navigation; this covers app-level backgrounding. Lifecycle
+    // callbacks fire on the main thread, matching the target's thread confinement.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, target) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) target.clear()
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
 
     val borderColor = when {
         isError -> MaterialTheme.colorScheme.error

@@ -9,9 +9,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyCode
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
 
@@ -119,20 +116,6 @@ fun rememberKeyboardController(onAction: (() -> Unit)? = null): KeyboardControll
     // active target (and any secure field it drives) cannot outlive the screen.
     DisposableEffect(controller) {
         onDispose { controller.hide() }
-    }
-    // H9: wipe the active target's secret buffer when the app is backgrounded
-    // (ON_STOP) so no typed secret lingers in memory while the user is away.
-    // Per-screen dispose wipes cover navigation; this covers app-level backgrounding.
-    // Lifecycle callbacks fire on the main thread, satisfying the controller's
-    // thread-confinement contract. On desktop the lifecycle may not emit ON_STOP —
-    // the no-op there is acceptable (lower IME threat; dispose wipes still apply).
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle, controller) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) controller.activeTarget?.clear()
-        }
-        lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer) }
     }
     return controller
 }

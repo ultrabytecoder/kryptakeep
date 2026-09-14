@@ -18,6 +18,7 @@ class SecureTargetAdapter(
 
     override fun insert(char: Char) {
         if (isFull()) return
+        if (isSingleLine && (char == '\n' || char == '\r')) return
         val current = state.toCharArray()
         val i = cursorIndex.coerceIn(0, current.size)
         val newChars = current.copyOfRange(0, i) + char + current.copyOfRange(i, current.size)
