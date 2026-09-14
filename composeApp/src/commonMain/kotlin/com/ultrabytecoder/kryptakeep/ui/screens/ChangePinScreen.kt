@@ -53,6 +53,7 @@ fun ChangePinScreen(
     val passwordTarget = remember {
         SecureTargetAdapter(
             state = passwordField,
+            maxLength = 128,
             onValueChanged = { viewModel.onPasswordInput(it) }
         )
     }
@@ -68,6 +69,11 @@ fun ChangePinScreen(
         if (isPassword) {
             controller.show(passwordTarget)
         }
+    }
+
+    // Keep the keyboard inert while a submit is in flight (defense-in-depth).
+    LaunchedEffect(state.isProcessing) {
+        controller.setInputEnabled(!state.isProcessing)
     }
 
     DisposableEffect(Unit) {

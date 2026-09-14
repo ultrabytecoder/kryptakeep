@@ -1,6 +1,7 @@
 package com.ultrabytecoder.kryptakeep.ui.keyboard.state
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -32,6 +33,9 @@ class KeyboardController(
 ) {
     private var _state: KeyboardUiState by mutableStateOf(KeyboardUiState())
     var activeTarget: KeyboardTarget? by mutableStateOf(null)
+    // When false (e.g. a locked or in-flight screen) the keyboard is inert: no
+    // characters are inserted/deleted. Set per-screen via setInputEnabled.
+    private var inputEnabled = true
 
     val isVisible: Boolean get() = _state.isVisible
     val layoutType: KeyboardLayoutType get() = _state.layoutType
@@ -84,11 +88,17 @@ class KeyboardController(
         }
     }
 
+    fun setInputEnabled(enabled: Boolean) {
+        inputEnabled = enabled
+    }
+
     fun insertChar(c: Char) {
+        if (!inputEnabled) return
         activeTarget?.insert(c)
     }
 
     fun deleteChar() {
+        if (!inputEnabled) return
         activeTarget?.delete()
     }
 }
@@ -103,6 +113,11 @@ fun rememberKeyboardController(onAction: (() -> Unit)? = null): KeyboardControll
     val onActionRef = rememberUpdatedState(onAction)
     LaunchedEffect(controller) {
         controller.onAction = { onActionRef.value?.invoke() }
+    }
+    // Hide the keyboard when this controller's screen leaves composition so the
+    // active target (and any secure field it drives) cannot outlive the screen.
+    DisposableEffect(controller) {
+        onDispose { controller.hide() }
     }
     return controller
 }

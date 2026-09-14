@@ -240,6 +240,7 @@ fun PinScreenEnter(
     val passwordTarget = remember {
         SecureTargetAdapter(
             state = passwordField,
+            maxLength = 128,
             onValueChanged = { viewModel.onPasswordInput(it) }
         )
     }
@@ -254,6 +255,12 @@ fun PinScreenEnter(
         if (isPassword) {
             controller.show(passwordTarget)
         }
+    }
+
+    // Keep the keyboard inert while locked or in flight so a locked screen can't
+    // still accumulate input.
+    LaunchedEffect(state.isLocked, state.isProcessing) {
+        controller.setInputEnabled(!state.isLocked && !state.isProcessing)
     }
 
     LaunchedEffect(state.errorMessage, state.isProcessing) {

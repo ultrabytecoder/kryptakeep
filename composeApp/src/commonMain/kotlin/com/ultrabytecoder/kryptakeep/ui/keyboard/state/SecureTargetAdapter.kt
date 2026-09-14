@@ -8,7 +8,6 @@ import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 
 class SecureTargetAdapter(
     private val state: SecureTextFieldState,
-    override val id: String = "secure_field",
     private val maxLength: Int = Int.MAX_VALUE,
     override val maxLines: Int = 1,
     override val isSingleLine: Boolean = true,

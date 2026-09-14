@@ -33,9 +33,9 @@ fun CreateWalletSetupScreen(
     var walletName by remember { mutableStateOf(viewModel.walletNameValue) }
     val walletNameTarget = remember {
         MutableStateTarget(
-            id = "wallet_name",
             getter = { walletName },
-            setter = { walletName = it; viewModel.setWalletName(it) }
+            setter = { walletName = it; viewModel.setWalletName(it) },
+            maxLength = 50
         )
     }
 
@@ -52,6 +52,7 @@ fun CreateWalletSetupScreen(
     val mnemonicTarget = remember {
         SecureTargetAdapter(
             state = mnemonicState,
+            maxLength = 300,
             onValueChanged = {
                 mnemonicError = null
                 viewModel.clearCreateError()
@@ -64,6 +65,7 @@ fun CreateWalletSetupScreen(
     val passphraseTarget = remember {
         SecureTargetAdapter(
             state = passphraseState,
+            maxLength = 256,
             onValueChanged = { passphraseError = null }
         )
     }
@@ -72,6 +74,7 @@ fun CreateWalletSetupScreen(
     val passphraseConfirmTarget = remember {
         SecureTargetAdapter(
             state = passphraseConfirmState,
+            maxLength = 256,
             onValueChanged = { passphraseError = null }
         )
     }
@@ -102,6 +105,11 @@ fun CreateWalletSetupScreen(
         }
     }
     val controller = rememberKeyboardController(onAction = nextAction)
+
+    // Keep the keyboard inert while wallet creation is in flight.
+    LaunchedEffect(isCreating) {
+        controller.setInputEnabled(!isCreating)
+    }
 
     DisposableEffect(Unit) {
         onDispose {

@@ -9,7 +9,6 @@ class CursorSupportTest {
     private fun target(start: String = ""): MutableStateTarget {
         var backing = start
         return MutableStateTarget(
-            id = "t",
             getter = { backing },
             setter = { backing = it }
         )

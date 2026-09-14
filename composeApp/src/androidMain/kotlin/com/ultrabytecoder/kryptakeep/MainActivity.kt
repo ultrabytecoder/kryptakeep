@@ -33,6 +33,13 @@ class MainActivity : FragmentActivity() {
         // soft keyboard, which would defeat the secure-keyboard threat model.
         blockSystemKeyboard()
     }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Drop the process-wide Activity reference so blockSystemKeyboard() can't
+        // act on a stale activity after process/activity recreation.
+        SystemKeyboardBlockerContext.clear()
+    }
 }
 
 @Preview

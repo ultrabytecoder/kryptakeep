@@ -53,6 +53,7 @@ fun SetPasswordScreen(
     val passwordTarget = remember {
         SecureTargetAdapter(
             state = passwordField,
+            maxLength = 128,
             onValueChanged = { viewModel.onInput(it) }
         )
     }
@@ -76,6 +77,12 @@ fun SetPasswordScreen(
 
     LaunchedEffect(Unit) {
         controller.show(passwordTarget)
+    }
+
+    // Keep the keyboard inert while a submit is in flight (defense-in-depth on
+    // top of the ViewModel's own isProcessing guard).
+    LaunchedEffect(state.isProcessing) {
+        controller.setInputEnabled(!state.isProcessing)
     }
 
     LaunchedEffect(Unit) {

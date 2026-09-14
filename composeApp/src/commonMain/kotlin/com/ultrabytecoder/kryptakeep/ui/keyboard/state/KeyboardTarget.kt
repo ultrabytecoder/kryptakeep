@@ -1,7 +1,6 @@
 package com.ultrabytecoder.kryptakeep.ui.keyboard.state
 
 interface KeyboardTarget {
-    val id: String
     val text: String
     /** Cursor position (0..text.length); backed by snapshot state so the caret tracks it. */
     var cursorIndex: Int

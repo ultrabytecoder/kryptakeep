@@ -5,7 +5,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
 class MutableStateTarget(
-    override val id: String,
     private val getter: () -> String,
     private val setter: (String) -> Unit,
     private val maxLength: Int = Int.MAX_VALUE,
@@ -17,6 +16,7 @@ class MutableStateTarget(
 
     override fun insert(char: Char) {
         if (isFull()) return
+        if (isSingleLine && (char == '\n' || char == '\r')) return
         val current = text
         val i = cursorIndex.coerceIn(0, current.length)
         setter(current.substring(0, i) + char + current.substring(i))

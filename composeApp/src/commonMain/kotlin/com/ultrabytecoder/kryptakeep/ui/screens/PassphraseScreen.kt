@@ -31,6 +31,7 @@ fun PassphraseScreen(
     val passphraseTarget = remember {
         SecureTargetAdapter(
             state = passphraseState,
+            maxLength = 256,
             onValueChanged = { passphraseError = null }
         )
     }
@@ -38,6 +39,7 @@ fun PassphraseScreen(
     val passphraseConfirmTarget = remember {
         SecureTargetAdapter(
             state = passphraseConfirmState,
+            maxLength = 256,
             onValueChanged = { passphraseError = null }
         )
     }

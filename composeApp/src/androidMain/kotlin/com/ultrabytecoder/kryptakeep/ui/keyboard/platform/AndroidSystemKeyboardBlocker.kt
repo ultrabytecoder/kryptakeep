@@ -14,6 +14,10 @@ object SystemKeyboardBlockerContext {
     }
 
     fun getActivity(): Activity? = activityRef?.get()
+
+    fun clear() {
+        activityRef = null
+    }
 }
 
 /**
