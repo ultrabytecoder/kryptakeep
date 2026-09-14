@@ -33,6 +33,16 @@ class MainActivity : FragmentActivity() {
             App()
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-assert IME suppression on every resume: a config change, a
+        // multi-window transition, or a dismissed system dialog can re-show the
+        // soft keyboard, which would defeat the secure-keyboard threat model.
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
+        WindowInsetsControllerCompat(window, window.decorView)
+            .hide(WindowInsetsCompat.Type.ime())
+    }
 }
 
 @Preview

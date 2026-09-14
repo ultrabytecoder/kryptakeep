@@ -153,22 +153,27 @@ fun PassphraseScreen(
                     Button(
                         onClick = {
                             if (usePassphrase) {
-                                if (passphraseState.text != passphraseConfirmState.text) {
+                                if (!passphraseState.matches(passphraseConfirmState)) {
                                     passphraseError = "Passphrases do not match"
                                     return@Button
                                 }
-                                if (passphraseState.text.isBlank()) {
+                                if (passphraseState.isBlank()) {
                                     passphraseError = "Passphrase cannot be empty"
                                     return@Button
                                 }
                                 passphraseError = null
+                                // Hand off a fresh copy (the ViewModel takes ownership),
+                                // then scrub the local buffers so the passphrase does not
+                                // linger in the backstack after navigating forward.
                                 viewModel.setPassphrase(passphraseState.toCharArray())
+                                passphraseState.wipe()
+                                passphraseConfirmState.wipe()
                             } else {
                                 viewModel.clearPassphrase()
                             }
                             onNext()
                         },
-                        enabled = !usePassphrase || passphraseState.text.isNotBlank(),
+                        enabled = !usePassphrase || !passphraseState.isBlank(),
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) {

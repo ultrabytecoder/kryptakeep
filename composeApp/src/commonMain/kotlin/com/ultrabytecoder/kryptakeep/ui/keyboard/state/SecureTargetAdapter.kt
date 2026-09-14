@@ -19,6 +19,7 @@ class SecureTargetAdapter(
         val newChars = current + char
         current.wipe()
         state.update(newChars)
+        newChars.wipe()
         onValueChanged(state.text)
     }
 
@@ -28,6 +29,7 @@ class SecureTargetAdapter(
             val newChars = current.copyOfRange(0, current.size - 1)
             current.wipe()
             state.update(newChars)
+            newChars.wipe()
             onValueChanged(state.text)
         }
     }

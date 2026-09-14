@@ -54,6 +54,30 @@ class SecureTextFieldState(initial: String = "") {
     }
 
     /**
+     * Constant-time equality against another field's contents. Avoids the
+     * early-exit timing side channel of `String ==` on a secret: always scans
+     * the shorter buffer and folds in any length difference into the result.
+     */
+    fun matches(other: SecureTextFieldState): Boolean {
+        val a = buffer
+        val b = other.buffer
+        var result = a.size xor b.size
+        val n = if (a.size < b.size) a.size else b.size
+        for (i in 0 until n) {
+            result = result or (a[i].code xor b[i].code)
+        }
+        return result == 0
+    }
+
+    /** True when the contents are empty or whitespace-only. */
+    fun isBlank(): Boolean {
+        for (c in buffer) {
+            if (!c.isWhitespace()) return false
+        }
+        return true
+    }
+
+    /**
      * Zeroes the internal buffer and drops the text reference. Call on
      * `DisposableEffect.onDispose` and once the secret has been consumed.
      */

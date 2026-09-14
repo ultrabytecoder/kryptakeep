@@ -27,8 +27,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.KeyboardTarget
@@ -40,7 +38,7 @@ fun SecureOutlinedTextField(
     label: @Composable (() -> Unit)?,
     modifier: Modifier = Modifier,
     layoutType: KeyboardLayoutType = KeyboardLayoutType.Qwerty,
-    visualTransformation: VisualTransformation = VisualTransformation.None,
+    masked: Boolean = true,
     isError: Boolean = false,
     supportingText: @Composable (() -> Unit)? = null,
     placeholder: @Composable (() -> Unit)? = null,
@@ -63,8 +61,14 @@ fun SecureOutlinedTextField(
 
     val borderWidth = if (isActive) 2.dp else 1.dp
 
-    val transformedText = remember(target.text, visualTransformation) {
-        visualTransformation.filter(AnnotatedString(target.text)).text
+    // Sensitive fields are masked by default. The mask is derived from the
+    // character count only (whitespace positions preserved so multi-line
+    // mnemonics keep their shape), so no secret character is ever rendered or
+    // boxed into an un-wipeable display object beyond the platform's own
+    // `target.text`.
+    val displayText = remember(target.text, masked) {
+        if (masked) target.text.map { if (it.isWhitespace()) it else '•' }.joinToString("")
+        else target.text
     }
 
     Column(modifier = modifier) {
@@ -116,7 +120,7 @@ fun SecureOutlinedTextField(
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = transformedText,
+                                text = displayText,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                                 maxLines = maxLines

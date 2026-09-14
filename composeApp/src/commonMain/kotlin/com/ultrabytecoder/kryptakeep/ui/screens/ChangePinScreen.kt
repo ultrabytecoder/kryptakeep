@@ -62,10 +62,10 @@ fun ChangePinScreen(
     val credentialLabel = if (isPassword) "password" else "PIN"
 
     LaunchedEffect(state.securityMethod) {
+        // Password mode drives the on-screen QWERTY keyboard; PIN mode uses the
+        // dedicated NumericNumpadLayout (wired to the ViewModel) instead.
         if (isPassword) {
             controller.show(passwordTarget)
-        } else {
-            controller.showNumpad()
         }
     }
 
@@ -185,6 +185,8 @@ fun ChangePinScreen(
                                 Text("Continue", style = MaterialTheme.typography.titleMedium)
                             }
                         }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        AppKeyboard()
                     } else {
                         NumericNumpadLayout(
                             onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
@@ -192,8 +194,6 @@ fun ChangePinScreen(
                             isLocked = state.isProcessing
                         )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    AppKeyboard()
                 }
             }
         }

@@ -45,18 +45,10 @@ fun PinScreenSetup(
     var showRecoveryDialog by remember { mutableStateOf(false) }
     val controller = rememberKeyboardController()
 
-    LaunchedEffect(Unit) {
-        if (!state.isChoosingLength) {
-            controller.showNumpad()
-        }
-    }
-
-    LaunchedEffect(state.isChoosingLength) {
-        if (!state.isChoosingLength) {
-            controller.showNumpad()
-        }
-    }
-
+    // PIN input is handled by the dedicated NumericNumpadLayout wired directly
+    // to the ViewModel. The controller-driven keyboard is not used on this
+    // pure-PIN screen, so we intentionally do not call showNumpad (which would
+    // render a second, inert numpad via AppKeyboard).
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
@@ -197,8 +189,6 @@ fun PinScreenSetup(
                             isLocked = state.isLocked || state.isProcessing
                         )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    AppKeyboard()
                 }
             }
         }
@@ -258,10 +248,10 @@ fun PinScreenEnter(
     val isPassword = state.securityMethod == SecurityMethod.PASSWORD
 
     LaunchedEffect(state.securityMethod) {
+        // Password mode drives the on-screen QWERTY keyboard; PIN mode uses the
+        // dedicated NumericNumpadLayout (wired to the ViewModel) instead.
         if (isPassword) {
             controller.show(passwordTarget)
-        } else {
-            controller.showNumpad()
         }
     }
 
@@ -410,6 +400,8 @@ fun PinScreenEnter(
                                 Text("Unlock", style = MaterialTheme.typography.titleMedium)
                             }
                         }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        AppKeyboard()
                     } else {
                         NumericNumpadLayout(
                             onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
@@ -417,8 +409,6 @@ fun PinScreenEnter(
                             isLocked = state.isLocked || state.isProcessing
                         )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    AppKeyboard()
                 }
             }
         }

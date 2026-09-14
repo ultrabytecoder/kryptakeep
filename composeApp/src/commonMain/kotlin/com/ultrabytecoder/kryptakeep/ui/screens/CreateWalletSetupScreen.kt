@@ -156,6 +156,7 @@ fun CreateWalletSetupScreen(
                         target = walletNameTarget,
                         label = { Text("Wallet name") },
                         singleLine = true,
+                        masked = false,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
@@ -283,11 +284,15 @@ fun CreateWalletSetupScreen(
 
                         Button(
                             onClick = {
-                                if (usePassphrase && passphraseState.text != passphraseConfirmState.text) {
+                                if (usePassphrase && !passphraseState.matches(passphraseConfirmState)) {
                                     passphraseError = "Passphrases do not match"
                                     return@Button
                                 }
                                 passphraseError = null
+                                // `mnemonicChars`/`passphraseChars` are fresh copies handed to
+                                // the ViewModel, which takes ownership and wipes them in its
+                                // own coroutine — do NOT wipe them here (would race the
+                                // Dispatchers.Default write). Only scrub our own buffers.
                                 val mnemonicChars = mnemonicState.trimmedCopy()
                                 val passphraseChars =
                                     if (usePassphrase) passphraseState.toCharArray() else CharArray(0)
@@ -298,8 +303,8 @@ fun CreateWalletSetupScreen(
                                 passphraseConfirmState.wipe()
                             },
                             enabled = walletName.isNotBlank()
-                                && mnemonicState.text.isNotBlank()
-                                && (!usePassphrase || passphraseState.text.isNotBlank())
+                                && !mnemonicState.isBlank()
+                                && (!usePassphrase || !passphraseState.isBlank())
                                 && !isCreating,
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp)
