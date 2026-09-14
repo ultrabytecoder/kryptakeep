@@ -61,7 +61,7 @@ fun CreateWalletSetupScreen(
         )
     }
 
-    var usePassphrase by remember { mutableStateOf(false) }
+    var usePassphrase by rememberSaveable { mutableStateOf(false) }
     val passphraseState = remember { SecureTextFieldState() }
     val passphraseTarget = remember {
         SecureTargetAdapter(
@@ -132,7 +132,13 @@ fun CreateWalletSetupScreen(
                     navigationIcon = {
                         IconButton(
                             onClick = {
-                                if (step == 0) onBack() else { step = 0; controller.hide() }
+                                if (step == 0) {
+                                    focusManager.clearFocus()
+                                    onBack()
+                                } else {
+                                    step = 0
+                                    controller.hide()
+                                }
                             },
                             enabled = !isCreating
                         ) {
@@ -188,7 +194,8 @@ fun CreateWalletSetupScreen(
                                 }
                                 viewModel.setMode(newMode)
                             }
-                        }
+                        },
+                        enabled = !isCreating
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -212,7 +219,8 @@ fun CreateWalletSetupScreen(
                         SegmentedSingleChoice(
                             options = SecureMnemonicCode.SUPPORTED_WORD_COUNTS.map { it to "$it words" },
                             selected = wordCount,
-                            onSelected = { viewModel.setWordCount(it) }
+                            onSelected = { viewModel.setWordCount(it) },
+                            enabled = !isCreating
                         )
 
                         Spacer(modifier = Modifier.height(16.dp))
@@ -222,7 +230,7 @@ fun CreateWalletSetupScreen(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { viewModel.setUseGesture(!useGesture) }
+                                .clickable(enabled = !isCreating) { viewModel.setUseGesture(!useGesture) }
                         ) {
                             Checkbox(
                                 checked = useGesture,
@@ -255,7 +263,7 @@ fun CreateWalletSetupScreen(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
+                                .clickable(enabled = !isCreating) {
                                     usePassphrase = !usePassphrase
                                     if (!usePassphrase) {
                                         passphraseState.wipe()
@@ -369,7 +377,8 @@ fun CreateWalletSetupScreen(
 private fun <T> SegmentedSingleChoice(
     options: List<Pair<T, String>>,
     selected: T,
-    onSelected: (T) -> Unit
+    onSelected: (T) -> Unit,
+    enabled: Boolean = true
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -379,6 +388,7 @@ private fun <T> SegmentedSingleChoice(
             val isSelected = value == selected
             Surface(
                 onClick = { onSelected(value) },
+                enabled = enabled,
                 shape = RoundedCornerShape(12.dp),
                 color = if (isSelected) {
                     MaterialTheme.colorScheme.primaryContainer
