@@ -63,7 +63,8 @@ class RemoteFiatQuoteProvider(
                     lastSuccessAt = now
                 }
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            println("RemoteFiatQuoteProvider: fetch failed — ${e.message}")
         }
         cache
     }

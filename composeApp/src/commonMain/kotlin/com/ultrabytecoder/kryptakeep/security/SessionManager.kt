@@ -97,14 +97,17 @@ class SessionManager(
     private var driver: GuardedSqlDriver? = null
 
     /**
-     * Driver whose native close was deferred because queries were still in
+     * Drivers whose native close was deferred because queries were still in
      * flight when the drain budget expired. Retried on the next [lock] or
-     * [unlock] Phase 1. Holding this reference (and the DEK) until the native
-     * close actually runs prevents the key from lingering in an un-closed
-     * SQLCipher connection after a "successful" lock.
+     * [unlock] Phase 1. Holding these references (and the DEK) until the
+     * native close actually runs prevents the key from lingering in an
+     * un-closed SQLCipher connection after a "successful" lock.
+     *
+     * A list (not a single slot) so two rapid locks with overlapping in-flight
+     * queries don't lose the first deferred driver.
      */
     @Volatile
-    private var pendingClose: GuardedSqlDriver? = null
+    private var pendingCloses: List<GuardedSqlDriver> = emptyList()
 
     @Volatile
     private var database: KryptaKeepDatabase? = null
@@ -404,18 +407,19 @@ class SessionManager(
     }
 
     private fun closeInternal() {
-        // Retry any previously deferred native close: only safe when ALL
+        // Retry any previously deferred native closes: only safe when ALL
         // in-flight queries (shared counter across current + pending drivers)
         // have drained. If close throws, keep the reference for the next retry.
-        pendingClose?.let { pending ->
-            if (inFlightQueries.get() == 0) {
+        if (pendingCloses.isNotEmpty() && inFlightQueries.get() == 0) {
+            val stillPending = mutableListOf<GuardedSqlDriver>()
+            for (pending in pendingCloses) {
                 try {
                     pending.close()
-                    pendingClose = null
                 } catch (_: Exception) {
-                    // Keep the reference; retry next time.
+                    stillPending.add(pending)
                 }
             }
+            pendingCloses = stillPending
         }
         try {
             // Mark the GUARDED wrapper closed FIRST, then close it. After this
@@ -429,19 +433,19 @@ class SessionManager(
                 // Queries still in flight after the drain budget: defer the
                 // native close to avoid freeing the SQLite handle
                 // mid-statement (use-after-free / SIGSEGV). The driver is
-                // kept in pendingClose and retried on the next lock/unlock.
+                // kept in pendingCloses and retried on the next lock/unlock.
                 // The DEK is NOT wiped until the native close actually runs,
                 // so the key doesn't linger in an un-closed connection.
-                pendingClose = driver
+                if (driver != null) {
+                    pendingCloses = pendingCloses + driver!!
+                }
             }
         } catch (_: Exception) {
         }
         driver = null
         database = null
-        // Only wipe the DEK when the native handle is actually closed (or was
-        // never open). If the close is deferred, the driver still holds the
-        // key internally — wiping our reference doesn't help.
-        if (pendingClose == null) {
+        // Only wipe the DEK when no unclosed native driver holds it.
+        if (pendingCloses.isEmpty()) {
             dek?.wipe()
             dek = null
         }

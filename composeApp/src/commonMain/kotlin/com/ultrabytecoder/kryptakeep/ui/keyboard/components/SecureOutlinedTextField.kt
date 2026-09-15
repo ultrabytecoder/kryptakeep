@@ -115,12 +115,14 @@ fun SecureOutlinedTextField(
         }
     }
     val showMask = masked && !revealed
-    val displayText = remember(target.text, showMask) {
-        if (showMask) {
-            CharArray(target.text.length) { '•' }.concatToString()
-        } else {
-            target.text
-        }
+    val displayText = if (showMask) {
+        // Mask path: use length only — no reference to the secret string is
+        // held between recompositions. The mask is always dots, so only the
+        // count matters (not the content).
+        remember(target.length, showMask) { "•".repeat(target.length) }
+    } else {
+        // Unmasked path: content matters, so key on the full text.
+        remember(target.text, showMask) { target.text }
     }
 
     // Per-Text layouts, used to map a tap on the (split) content to a character

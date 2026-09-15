@@ -222,4 +222,62 @@ class SessionManagerInFlightTest {
             "closed driver must not receive new statements"
         )
     }
+
+    @Test
+    fun deferredNativeCloseIsRetriedOnNextLock() {
+        kotlinx.coroutines.runBlocking {
+            // First lock defers the close (query still in flight after drain
+            // budget). After the query finishes, a second lock retries and
+            // closes the driver.
+            val raw = FakeDriver(blockQueryMillis = 1500)
+            val factory = FakeFactory(raw)
+            val scope = CoroutineScope(Dispatchers.Default)
+            val manager = SessionManager(factory, scope)
+
+            try {
+                // Phase 1: unlock, start a slow query, lock (defers close).
+                assertEquals(UnlockResult.Success, manager.unlock(ByteArray(32)))
+                val guarded = GuardedSqlDriver(raw, manager)
+
+                val queryDone = CountDownLatch(1)
+                val t = Thread {
+                    try {
+                        guarded.executeQuery(null, "SELECT 1", { QueryResult.Value(Unit) }, 0)
+                    } finally {
+                        queryDone.countDown()
+                    }
+                }
+                t.start()
+                assertTrue(raw.queryEntered.await(2, TimeUnit.SECONDS))
+
+                manager.lock()
+                // Wait for the session to lock (drain budget expires ~500ms).
+                val deadline = System.currentTimeMillis() + 3000
+                while (manager.isUnlocked.value && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(20)
+                }
+                assertEquals(false, manager.isUnlocked.value, "session must be locked")
+
+                // Phase 2: wait for the slow query to finish, then give the
+                // first lock coroutine time to finish deferring the close.
+                assertTrue(queryDone.await(8, TimeUnit.SECONDS), "query must complete")
+                t.join(8000)
+                Thread.sleep(200)
+
+                // Phase 3: second lock retries the deferred close. Since
+                // inFlightQueries is now 0, the pending driver is closed.
+                manager.lock()
+                val retryDeadline = System.currentTimeMillis() + 3000
+                while (closeCountOf(raw) == 0 && System.currentTimeMillis() < retryDeadline) {
+                    Thread.sleep(20)
+                }
+                assertTrue(
+                    closeCountOf(raw) >= 1,
+                    "deferred driver must be closed on the retry lock"
+                )
+            } finally {
+                scope.cancel()
+            }
+        }
+    }
 }

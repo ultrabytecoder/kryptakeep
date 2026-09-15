@@ -31,7 +31,7 @@ fun CreateWalletSetupScreen(
     onBack: () -> Unit,
     onNext: () -> Unit
 ) {
-    var walletName by remember { mutableStateOf(viewModel.walletNameValue) }
+    var walletName by rememberSaveable { mutableStateOf(viewModel.walletNameValue) }
     // Two-step flow: step 0 = mode + wallet name (system IME, for good name entry);
     // step 1 = mode-specific secure fields (on-screen keyboard). Splitting keeps the
     // system keyboard and the secure keyboard from sharing a screen (which would

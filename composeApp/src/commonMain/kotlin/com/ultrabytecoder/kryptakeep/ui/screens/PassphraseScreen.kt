@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -25,7 +26,7 @@ fun PassphraseScreen(
     onBack: () -> Unit,
     onNext: () -> Unit
 ) {
-    var usePassphrase by remember { mutableStateOf(viewModel.hasPassphrase) }
+    var usePassphrase by rememberSaveable { mutableStateOf(viewModel.hasPassphrase) }
     var passphraseError by remember { mutableStateOf<String?>(null) }
     val passphraseState = remember { SecureTextFieldState() }
     val passphraseTarget = remember {
@@ -150,7 +151,6 @@ fun PassphraseScreen(
                             target = passphraseTarget,
                             label = { Text("Passphrase") },
                             singleLine = true,
-                            revealable = true,
                             isError = passphraseError != null,
                             supportingText = passphraseError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                             modifier = Modifier.fillMaxWidth(),
@@ -163,7 +163,6 @@ fun PassphraseScreen(
                             target = passphraseConfirmTarget,
                             label = { Text("Confirm passphrase") },
                             singleLine = true,
-                            revealable = true,
                             isError = passphraseError != null,
                             supportingText = passphraseError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                             modifier = Modifier.fillMaxWidth(),
