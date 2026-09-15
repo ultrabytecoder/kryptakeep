@@ -94,7 +94,17 @@ class SessionManager(
     private var dek: ByteArray? = null
 
     @Volatile
-    private var driver: SqlDriver? = null
+    private var driver: GuardedSqlDriver? = null
+
+    /**
+     * Driver whose native close was deferred because queries were still in
+     * flight when the drain budget expired. Retried on the next [lock] or
+     * [unlock] Phase 1. Holding this reference (and the DEK) until the native
+     * close actually runs prevents the key from lingering in an un-closed
+     * SQLCipher connection after a "successful" lock.
+     */
+    @Volatile
+    private var pendingClose: GuardedSqlDriver? = null
 
     @Volatile
     private var database: KryptaKeepDatabase? = null
@@ -122,8 +132,25 @@ class SessionManager(
      * The flag is cleared in Phase 1 of [unlock]/[unlockRecreating] (when the
      * session is confirmed locked), so a stale flag from a previous lock() cannot
      * cause a permanent lockout.
+     *
+     * @Volatile: [lock] writes this BEFORE acquiring [stateLock] so an
+     * [unlock] Phase 3 that is currently holding [stateLock] sees the write
+     * without needing the mutex. The in-lock read in [unlock] Phase 3 still
+     * works because @Volatile provides acquire semantics on the read.
      */
+    @Volatile
     private var lockRequested = false
+
+    /**
+     * Guards [unlockRecreating] against concurrent calls. Set under [stateLock]
+     * in Phase 1, cleared in Phase 3. A second call that finds this flag set
+     * returns false immediately instead of creating a driver that the first
+     * call's Phase 3 would close via closeInternal().
+     *
+     * In practice the caller (PinRepositoryImpl.setupPin) serializes calls via
+     * its mutex, so this is a defensive invariant, not a hot path.
+     */
+    private var recreateInFlight = false
 
     /**
      * Records user activity, resetting the idle timeout. Uses the monotonic clock
@@ -231,8 +258,14 @@ class SessionManager(
         // be closed and recreated. closeInternal() does not set _isUnlocked = false
         // (that is done explicitly in lock()), so set it here to keep the state
         // consistent while the driver is being recreated.
+        //
+        // The recreateInFlight flag prevents a second concurrent call from
+        // creating a driver that this call's Phase 3 would close via
+        // closeInternal(), orphaning the first caller's database reference.
         stateLock.lock()
         try {
+            if (recreateInFlight) return false
+            recreateInFlight = true
             lockRequested = false
             closeInternal()
             _isUnlocked.value = false
@@ -240,53 +273,61 @@ class SessionManager(
             stateLock.unlock()
         }
 
-        // Phase 2: open the driver OUTSIDE the lock (createDriver is suspending).
-        // If the first attempt fails, delete the database and retry once.
-        var newDriver: SqlDriver? = null
+        // Phase 2 + 3: wrapped in a single try/finally so recreateInFlight is
+        // cleared exactly once on every exit path — no per-catch-site bookkeeping.
         try {
-            newDriver = databaseDriverFactory.createDriver(dek)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            try {
-                databaseDriverFactory.deleteDatabase()
-            } catch (_: Exception) {
-                // deleteDatabase failed (e.g. file locked) — proceed to retry;
-                // createDriver will fail if the file still can't be opened.
-            }
+            // Phase 2: open the driver OUTSIDE the lock (createDriver is
+            // suspending). If the first attempt fails, delete the database
+            // and retry once.
+            var newDriver: SqlDriver? = null
             try {
                 newDriver = databaseDriverFactory.createDriver(dek)
-            } catch (e2: CancellationException) {
-                throw e2
-            } catch (e2: Exception) {
-                return false
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                try {
+                    databaseDriverFactory.deleteDatabase()
+                } catch (_: Exception) {
+                    // deleteDatabase failed (e.g. file locked) — proceed to
+                    // retry; createDriver will fail if the file still can't
+                    // be opened.
+                }
+                try {
+                    newDriver = databaseDriverFactory.createDriver(dek)
+                } catch (e2: CancellationException) {
+                    throw e2
+                } catch (e2: Exception) {
+                    return false
+                }
             }
-        }
 
-        // Phase 3: commit under the lock. Re-check lockRequested.
-        stateLock.lock()
-        try {
-            val raw = newDriver ?: return false
-            if (lockRequested) {
-                try { raw.close() } catch (_: Exception) {}
+            // Phase 3: commit under the lock. Re-check lockRequested.
+            stateLock.lock()
+            try {
+                val raw = newDriver ?: return false
+                if (lockRequested) {
+                    try { raw.close() } catch (_: Exception) {}
+                    return false
+                }
+                val d = GuardedSqlDriver(raw, this)
+                val newDatabase = KryptaKeepDatabase(d)
+                probe(d)
+                closeInternal()
+                driver = d
+                database = newDatabase
+                this.dek = dek
+                _isUnlocked.value = true
+                return true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                try { newDriver?.close() } catch (_: Exception) {}
                 return false
+            } finally {
+                stateLock.unlock()
             }
-            val d = GuardedSqlDriver(raw, this)
-            val newDatabase = KryptaKeepDatabase(d)
-            probe(d)
-            closeInternal()
-            driver = d
-            database = newDatabase
-            this.dek = dek
-            _isUnlocked.value = true
-            return true
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            try { newDriver?.close() } catch (_: Exception) {}
-            return false
         } finally {
-            stateLock.unlock()
+            recreateInFlight = false
         }
     }
 
@@ -312,23 +353,25 @@ class SessionManager(
      */
     fun lock() {
         appScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            // Mark locked first so new guarded queries fail fast, then acquire
-            // stateLock, drain the in-flight queries, and close under the same
-            // lock — no unlock phase can interleave between the drain and the
-            // close.
+            // Fail-fast for new database() callers AND for any unlock() Phase 3
+            // currently holding stateLock: both flags are written before we
+            // acquire the mutex, so an in-flight unlock() sees them via
+            // @Volatile / StateFlow acquire semantics and aborts its commit.
+            // Re-asserted under the lock below.
             _isUnlocked.value = false
+            lockRequested = true
             var locked = false
             try {
                 stateLock.lock()
                 locked = true
-                // Re-assert under the lock. If unlock()'s Phase 3 published
-                // _isUnlocked=true after we set it false above but before we
-                // acquired the lock, it would otherwise survive closeInternal()
-                // below, leaving isUnlocked=true while driver/database/dek are
-                // null (isUnlocked would report true but database() would throw).
-                // Re-asserting here also keeps new queries failing fast during
-                // the drain.
+                // Re-assert under the lock: if unlock() Phase 3 published
+                // _isUnlocked=true after our write above but before we acquired
+                // the lock, it would otherwise survive closeInternal() below.
                 _isUnlocked.value = false
+                // lockRequested was set before the lock; re-assert here so the
+                // value is definitely visible to any unlock() that acquires
+                // stateLock after us (belt-and-suspenders with @Volatile).
+                lockRequested = true
                 // Bounded drain: wait for in-flight guarded queries to finish so
                 // the driver can be closed without yanking native SQLite handles
                 // out from under a running statement. If they do not drain within
@@ -346,50 +389,74 @@ class SessionManager(
                     delay(CLOSE_DRAIN_POLL_MS)
                     waitedMillis += CLOSE_DRAIN_POLL_MS
                 }
-                // Set the flag and do NOT reset it: the next unlock() Phase 1
-                // will clear it. If we reset it here, an unlock() in Phase 3
+                // Do NOT reset lockRequested here: the next unlock() Phase 1
+                // will clear it. If we reset it, an unlock() in Phase 3
                 // (after the lock was released during Phase 2) would see
-                // lockRequested == false and publish the unlocked state,
-                // reopening the race.
-                lockRequested = true
+                // lockRequested == false and publish the unlocked state.
                 closeInternal()
                 HardwareKeyStore.purgeCache()
                 idleJob?.cancel()
                 idleJob = null
             } finally {
-                // Unlock only if we actually acquired it. Cancellation inside
-                // stateLock.lock() (before acquisition) or at a drain suspension
-                // point must never release a mutex we do not hold — and since
-                // there is no suspension point between lock() returning and
-                // `locked = true`, the flag cannot be skipped, so the mutex is
-                // neither leaked nor double-released.
                 if (locked) stateLock.unlock()
             }
         }
     }
 
     private fun closeInternal() {
+        // Retry any previously deferred native close: only safe when ALL
+        // in-flight queries (shared counter across current + pending drivers)
+        // have drained. If close throws, keep the reference for the next retry.
+        pendingClose?.let { pending ->
+            if (inFlightQueries.get() == 0) {
+                try {
+                    pending.close()
+                    pendingClose = null
+                } catch (_: Exception) {
+                    // Keep the reference; retry next time.
+                }
+            }
+        }
         try {
             // Mark the GUARDED wrapper closed FIRST, then close it. After this
             // line any statement starting on this wrapper (a background
             // coroutine still holding a captured database reference) fails
             // fast in tryBeginQuery instead of reaching the native handle.
-            // Closing the wrapper delegates to rawDriver.close(); a stray
-            // consumer close() on the published driver can never reach the
-            // native handle — only this path (after the in-flight drain)
-            // closes.
-            (driver as? GuardedSqlDriver)?.markClosed()
-            driver?.close()
+            driver?.markClosed()
+            if (inFlightQueries.get() == 0) {
+                driver?.close()
+            } else {
+                // Queries still in flight after the drain budget: defer the
+                // native close to avoid freeing the SQLite handle
+                // mid-statement (use-after-free / SIGSEGV). The driver is
+                // kept in pendingClose and retried on the next lock/unlock.
+                // The DEK is NOT wiped until the native close actually runs,
+                // so the key doesn't linger in an un-closed connection.
+                pendingClose = driver
+            }
         } catch (_: Exception) {
         }
         driver = null
         database = null
-        dek?.wipe()
-        dek = null
+        // Only wipe the DEK when the native handle is actually closed (or was
+        // never open). If the close is deferred, the driver still holds the
+        // key internally — wiping our reference doesn't help.
+        if (pendingClose == null) {
+            dek?.wipe()
+            dek = null
+        }
     }
 
-    override fun database(): KryptaKeepDatabase =
-        database?.takeIf { _isUnlocked.value } ?: throw IllegalStateException("Database is locked")
+    override fun database(): KryptaKeepDatabase {
+        // Read _isUnlocked FIRST: it is written last in unlock() Phase 3, so a
+        // reader that sees true is guaranteed (via the StateFlow's AtomicReference
+        // release/acquire) to also see the fully-published driver/database refs.
+        // Reading database first would allow a worker to observe the new reference
+        // before the unlock flag is published, or to observe a stale reference after
+        // lock() has cleared it.
+        if (!_isUnlocked.value) throw IllegalStateException("Database is locked")
+        return database ?: throw IllegalStateException("Database is locked")
+    }
 
     /**
      * Increments the in-flight query counter. Called by [GuardedSqlDriver] around

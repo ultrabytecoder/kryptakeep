@@ -35,20 +35,46 @@ fun SymbolLayout(
         }
 
         KeyboardRow {
-            listOf('-', '=', '(', ')', '[', ']', '{', '}', '@', '#').forEach { symbol ->
+            listOf('!', '?', ';', ':', '"', '\'', ',', '.', '/', '\\').forEach { symbol ->
                 KeyboardKey(
                     label = symbol.toString(),
-                    onClick = { controller?.insertChar(symbol) },
+                    onClick = { controller?.onKey(KeyCode.Symbol(symbol)) },
                     modifier = Modifier.weight(1f)
                 )
             }
         }
 
         KeyboardRow {
-            listOf('$', '^', '&', '*', '_', '+', '%', '~').forEach { symbol ->
+            listOf('<', '>', '|', '`', '-', '=', '(', ')', '[', ']').forEach { symbol ->
                 KeyboardKey(
                     label = symbol.toString(),
-                    onClick = { controller?.insertChar(symbol) },
+                    onClick = { controller?.onKey(KeyCode.Symbol(symbol)) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        KeyboardRow {
+            listOf('{', '}', '@', '#', '$', '^', '&', '*', '+').forEach { symbol ->
+                KeyboardKey(
+                    label = symbol.toString(),
+                    onClick = { controller?.onKey(KeyCode.Symbol(symbol)) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            KeyboardKey(
+                label = "⌫",
+                onClick = { controller?.onKey(KeyCode.Backspace) },
+                contentDescription = "Delete",
+                modifier = Modifier.weight(2f)
+            )
+        }
+
+        KeyboardRow {
+            listOf('_', '%', '~', '€', '£', '¥').forEach { symbol ->
+                KeyboardKey(
+                    label = symbol.toString(),
+                    onClick = { controller?.onKey(KeyCode.Symbol(symbol)) },
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -70,6 +96,7 @@ fun SymbolLayout(
             KeyboardKey(
                 label = " ",
                 onClick = { controller?.onKey(KeyCode.Space) },
+                contentDescription = "Space",
                 modifier = Modifier.weight(4f)
             )
             KeyboardKey(

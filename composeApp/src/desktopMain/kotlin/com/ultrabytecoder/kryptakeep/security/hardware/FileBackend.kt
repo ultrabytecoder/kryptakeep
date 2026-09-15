@@ -69,7 +69,10 @@ class FileBackend : HardwareKeyBackend {
                     "Device key file has invalid length ${encoded.size} (expected $KEY_SIZE_BYTES)"
                 )
             }
-            return@synchronized javax.crypto.spec.SecretKeySpec(encoded, "AES")
+            // Pass a defensive copy to SecretKeySpec so wiping `encoded` in
+            // finally cannot zero the live key if the JDK implementation
+            // retains a reference to the original array.
+            return@synchronized javax.crypto.spec.SecretKeySpec(encoded.copyOf(), "AES")
         } finally {
             encoded.wipe()
         }

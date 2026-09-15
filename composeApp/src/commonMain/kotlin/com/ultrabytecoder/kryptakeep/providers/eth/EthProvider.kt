@@ -68,10 +68,14 @@ class EthProvider(
                 ?: json["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
                     ?.let { throw IllegalStateException("ETH RPC error: $it") }
                 ?: throw IllegalStateException("ETH RPC returned no result and no error: $body")
-            val hexBalance = result.jsonPrimitive.content.removePrefix("0x").ifEmpty { "0" }
+            val hexBalance = result.jsonPrimitive.content
+                .removePrefix("0x").removePrefix("0X").ifEmpty { "0" }
             // Parse the hex wei value directly into a BigDecimal (arbitrary
             // precision) instead of through Long, which overflows above 2^63 wei.
-            return BigDecimal.fromBigInteger(BigInteger.parseString(hexBalance, 16))
+            // Guard against malformed hex from the RPC: fall back to zero rather
+            // than crashing the balance fetch.
+            val safeHex = if (hexBalance.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) hexBalance else "0"
+            return BigDecimal.fromBigInteger(BigInteger.parseString(safeHex, 16))
         } finally {
             client.close()
         }

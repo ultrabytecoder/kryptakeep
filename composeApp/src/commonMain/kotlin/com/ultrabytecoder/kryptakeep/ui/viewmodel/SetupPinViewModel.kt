@@ -202,6 +202,7 @@ class SetupPinViewModel(
     fun enterRecoveryMode() {
         val s = _state.value
         if (s.isProcessing) return
+        if (s.pinLength !in PinConfig.PIN_LENGTH_OPTIONS) return
         // Wipe and re-allocate fresh wipe-able buffers: the user re-enters a
         // brand-new PIN through the normal numpad flow (addDigit requires
         // non-null buffers).

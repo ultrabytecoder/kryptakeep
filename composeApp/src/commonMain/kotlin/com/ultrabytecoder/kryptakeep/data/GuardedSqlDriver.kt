@@ -1,6 +1,7 @@
 package com.ultrabytecoder.kryptakeep.data
 
 import app.cash.sqldelight.Query
+import app.cash.sqldelight.Transacter
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
@@ -91,7 +92,19 @@ class GuardedSqlDriver(
 
     override fun currentTransaction() = delegate.currentTransaction()
 
-    override fun newTransaction() = delegate.newTransaction()
+    /**
+     * Fail-fast gate: refuse to start a new transaction after the driver is
+     * marked closed. Statements executed through the returned [Transacter.Transaction]
+     * bypass the per-statement guard (they do not go through [executeQuery]/[execute]),
+     * so the only protection for transaction-scoped statements is this entry-point
+     * check. A transaction started before [markClosed] may still run its remaining
+     * statements after close; SQLite rolls back the open transaction on close, and
+     * any subsequent statement fails with the closed-driver error.
+     */
+    override fun newTransaction(): QueryResult<Transacter.Transaction> {
+        if (closed.get() != 0) throw IllegalStateException("Database is locked")
+        return delegate.newTransaction()
+    }
 
     override fun addListener(vararg queryKeys: String, listener: Query.Listener) =
         delegate.addListener(*queryKeys, listener = listener)
@@ -103,10 +116,11 @@ class GuardedSqlDriver(
         delegate.notifyListeners(*queryKeys)
 
     override fun close() {
-        // Delegates to the raw driver. Only SessionManager holds this wrapper
-        // (consumers receive KryptaKeepDatabase, not the driver), so close() is
-        // reached exclusively from the session-lock drain path — after in-flight
-        // queries have finished.
+        // closeInternal() calls markClosed() before close(), so the gate is
+        // already armed. Do NOT call markClosed() here again — it would
+        // double-increment the counter. If close() is reached from a path
+        // other than closeInternal (e.g. a future refactor), the gate is
+        // still armed because closeInternal() runs first in every known path.
         delegate.close()
     }
 }

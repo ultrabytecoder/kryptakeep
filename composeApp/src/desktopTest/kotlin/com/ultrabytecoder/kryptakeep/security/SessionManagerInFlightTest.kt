@@ -139,10 +139,13 @@ class SessionManagerInFlightTest {
     }
 
     @Test
-    fun lockForcesCloseWhenQueryOutlivesDrainBudget() {
+    fun lockStopsWaitingAfterDrainBudgetAndDefersNativeClose() {
         kotlinx.coroutines.runBlocking {
             // Blocks far longer than the 500ms drain budget: the lock must
-            // stop waiting and force-close, rather than drain unbounded.
+            // stop waiting after the budget expires. The native close is
+            // deferred (not called) while the query is still in flight to
+            // avoid freeing the SQLite handle mid-statement (use-after-free).
+            // The markClosed() gate ensures new queries fail fast.
             val raw = FakeDriver(blockQueryMillis = 3000)
             val factory = FakeFactory(raw)
             val scope = CoroutineScope(Dispatchers.Default)
@@ -164,20 +167,21 @@ class SessionManagerInFlightTest {
                 t.start()
                 assertTrue(raw.queryEntered.await(2, TimeUnit.SECONDS), "query must enter the driver")
 
-                // A bounded drain closes at ~500ms of nominal budget; an
-                // unbounded drain would close only after the full 3000ms
-                // block. The 1800ms deadline sits between the two, so it
-                // distinguishes them even under CI scheduling jitter.
+                // The lock must complete within the bounded drain budget
+                // (~500ms + scheduling jitter), not wait for the full 3000ms
+                // block. The 1800ms deadline sits between the two.
                 manager.lock()
                 val deadline = tStart + 1800
-                while (closeCountOf(raw) == 0 && System.currentTimeMillis() < deadline) {
+                while (manager.isUnlocked.value && System.currentTimeMillis() < deadline) {
                     Thread.sleep(20)
                 }
-                assertTrue(
-                    closeCountOf(raw) >= 1,
-                    "driver must be force-closed after the drain budget expires, without waiting for the slow query"
+                assertEquals(
+                    false,
+                    manager.isUnlocked.value,
+                    "session must be locked after the drain budget expires, without waiting for the slow query"
                 )
-                assertEquals(false, manager.isUnlocked.value)
+                // database() must throw now that the session is locked.
+                assertFailsWith<IllegalStateException> { manager.database() }
 
                 // The slow query still completes on the fake (a real driver
                 // would fail it); its endQuery must not leak the counter.

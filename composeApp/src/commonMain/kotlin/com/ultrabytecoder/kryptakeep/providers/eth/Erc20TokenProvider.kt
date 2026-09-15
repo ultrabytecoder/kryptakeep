@@ -60,12 +60,15 @@ class Erc20TokenProvider(
 
         val client = createClient()
         try {
-            val rawBalanceHex = ethCall(client, contractAddress, data).removePrefix("0x").ifEmpty { "0" }
+            val rawBalanceHex = ethCall(client, contractAddress, data)
+                .removePrefix("0x").removePrefix("0X").ifEmpty { "0" }
             val decimals = fetchDecimalsWithClient(client)
             // Parse the hex token units directly into a BigDecimal (arbitrary
             // precision) instead of through Long, which overflows for large
-            // 18-decimal token balances.
-            return BigDecimal.fromBigInteger(BigInteger.parseString(rawBalanceHex, 16))
+            // 18-decimal token balances. Guard against malformed hex from the
+            // RPC: fall back to zero rather than crashing the balance fetch.
+            val safeHex = if (rawBalanceHex.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) rawBalanceHex else "0"
+            return BigDecimal.fromBigInteger(BigInteger.parseString(safeHex, 16))
                 .divide(BigDecimal.fromLong(10).pow(decimals))
         } finally {
             client.close()

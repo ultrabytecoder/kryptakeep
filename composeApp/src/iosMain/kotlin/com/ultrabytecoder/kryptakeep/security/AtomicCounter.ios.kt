@@ -1,6 +1,6 @@
 package com.ultrabytecoder.kryptakeep.security
 
-import kotlin.native.concurrent.AtomicInt
+import kotlin.concurrent.AtomicInt
 
 /**
  * Kotlin/Native (modern memory model): references are not frozen and plain

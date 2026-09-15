@@ -12,8 +12,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -24,7 +27,6 @@ fun KeyboardKey(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    isWide: Boolean = false,
     isActive: Boolean = false,
     contentDescription: String? = null
 ) {
@@ -40,12 +42,18 @@ fun KeyboardKey(
         else -> MaterialTheme.colorScheme.onSurface
     }
 
+    val semanticsModifier = Modifier.semantics(mergeDescendants = true) {
+        this.role = Role.Button
+        this.contentDescription = contentDescription ?: label
+        if (isActive) this.stateDescription = "active"
+    }
+
     Card(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
             .height(48.dp)
-            .then(if (contentDescription != null) Modifier.semantics { this.contentDescription = contentDescription } else Modifier),
+            .then(semanticsModifier),
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)),
         colors = CardDefaults.cardColors(

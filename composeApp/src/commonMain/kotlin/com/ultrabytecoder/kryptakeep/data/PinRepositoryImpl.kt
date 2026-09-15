@@ -259,17 +259,25 @@ class PinRepositoryImpl(
                         )
                         VerifyResult.Corrupted
                     } else if (dek != null) {
+                        // Reset the lockout counter BEFORE opening the session:
+                        // the GCM auth above already proved the PIN is correct,
+                        // so the counter reset is unconditional. If saveData
+                        // throws, the session is not yet unlocked and the DEK
+                        // is wiped in finally — safe retry. If unlock() later
+                        // fails (corrupt DB), the counter was reset
+                        // unnecessarily, but the user is routed to recovery
+                        // anyway where the counter is irrelevant.
+                        val resetData = gate.data.copy(
+                            failedAttempts = 0,
+                            lockedUntil = 0L,
+                            lockoutCount = 0,
+                            monotonicLockedAt = 0L,
+                            monotonicLockedUntil = 0L
+                        )
+                        saveData(resetData)
                         when (val result = sessionManager.unlock(dek)) {
                             is UnlockResult.Success -> {
                                 sessionOwnsDek = true
-                                val resetData = gate.data.copy(
-                                    failedAttempts = 0,
-                                    lockedUntil = 0L,
-                                    lockoutCount = 0,
-                                    monotonicLockedAt = 0L,
-                                    monotonicLockedUntil = 0L
-                                )
-                                saveData(resetData)
                                 _pinStateFlow.value = PinState.Setup(
                                     failedAttempts = 0,
                                     lockedUntil = 0,
@@ -468,11 +476,12 @@ class PinRepositoryImpl(
             null
         }
         if (loaded == null) {
-            // Missing lockout metadata: distinguish a fresh install from lost
-            // metadata over existing key material. The latter must show the
-            // corrupted (recovery) state so the user is never silently routed
-            // into a fresh setup that would destroy the wallet.
-            if (settingsStorage.getString(PIN_DATA_KEY) == null && keyManager.hasRawEnvelope()) {
+            // Missing or unreadable lockout metadata: if raw key material
+            // exists, the state is inconsistent (metadata lost or tampered
+            // while a wallet may exist) — surface as corrupted so the user
+            // is routed to recovery, never to a silent fresh setup that
+            // would destroy the wallet.
+            if (keyManager.hasRawEnvelope()) {
                 _pinStateFlow.value = PinState.Setup(
                     failedAttempts = PinConfig.MAX_ATTEMPTS,
                     lockedUntil = 0,

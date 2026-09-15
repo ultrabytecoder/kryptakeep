@@ -89,13 +89,16 @@ class Trc20TokenProvider(
                 client, contractAddress,
                 "balanceOf(address)", addressHex, address
             )
-            val rawBalanceHex = resultJson["constant_result"]?.jsonArray?.getOrNull(0)?.jsonPrimitive?.content?.removePrefix("0x")?.ifEmpty { "0" }
+            val rawBalanceHex = resultJson["constant_result"]?.jsonArray?.getOrNull(0)?.jsonPrimitive?.content
+                ?.removePrefix("0x")?.removePrefix("0X")?.ifEmpty { "0" }
                 ?: throw IllegalStateException("TRON RPC missing constant_result in balanceOf response")
             val decimals = fetchDecimalsWithClient(client, accountId)
             // Parse the hex token units directly into a BigDecimal (arbitrary
             // precision) instead of through Long, which overflows for large
-            // 18-decimal token balances.
-            return BigDecimal.fromBigInteger(BigInteger.parseString(rawBalanceHex, 16))
+            // 18-decimal token balances. Guard against malformed hex from the
+            // RPC: fall back to zero rather than crashing the balance fetch.
+            val safeHex = if (rawBalanceHex.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) rawBalanceHex else "0"
+            return BigDecimal.fromBigInteger(BigInteger.parseString(safeHex, 16))
                 .divide(BigDecimal.fromLong(10).pow(decimals))
         } finally {
             client.close()

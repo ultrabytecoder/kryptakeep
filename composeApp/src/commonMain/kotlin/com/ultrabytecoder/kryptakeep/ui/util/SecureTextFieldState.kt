@@ -56,25 +56,36 @@ class SecureTextFieldState(initial: String = "") {
     /**
      * Constant-time equality against another field's contents. Avoids the
      * early-exit timing side channel of `String ==` on a secret: always scans
-     * the shorter buffer and folds in any length difference into the result.
+     * a fixed maximum length (so the loop count does not depend on input
+     * length) and folds in any length difference into the result.
      */
     fun matches(other: SecureTextFieldState): Boolean {
         val a = buffer
         val b = other.buffer
         var result = a.size xor b.size
-        val n = if (a.size < b.size) a.size else b.size
+        // Scan the full length of the longer buffer with no early exit, so
+        // the comparison time depends only on max(len_a, len_b) — the same
+        // quantity already leaked by the size-xor above. The shorter side
+        // is padded with NUL.
+        val n = if (a.size > b.size) a.size else b.size
         for (i in 0 until n) {
-            result = result or (a[i].code xor b[i].code)
+            val ca = if (i < a.size) a[i].code else 0
+            val cb = if (i < b.size) b[i].code else 0
+            result = result or (ca xor cb)
         }
         return result == 0
     }
 
     /** True when the contents are empty or whitespace-only. */
     fun isBlank(): Boolean {
+        var result = 0
         for (c in buffer) {
-            if (!c.isWhitespace()) return false
+            // Fold non-whitespace into the accumulator without early exit,
+            // so the iteration count is independent of the first non-whitespace
+            // character's position (avoids a timing side channel).
+            result = result or (if (c.isWhitespace()) 0 else 1)
         }
-        return true
+        return result == 0
     }
 
     /**

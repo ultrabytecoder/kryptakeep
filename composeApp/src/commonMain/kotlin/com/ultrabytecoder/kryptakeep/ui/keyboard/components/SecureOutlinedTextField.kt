@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.password
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
@@ -74,6 +75,7 @@ fun SecureOutlinedTextField(
     enabled: Boolean = true
 ) {
     val controller = LocalKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val isActive = controller?.isVisible == true && controller.activeTarget == target
 
     // H9: wipe this field's buffer when the app is backgrounded (ON_STOP). Bound to
@@ -99,10 +101,10 @@ fun SecureOutlinedTextField(
     val borderWidth = if (isActive) 2.dp else 1.dp
 
     // Sensitive fields are masked by default. The mask is derived from the
-    // character count only (whitespace positions preserved so multi-line
-    // mnemonics keep their shape), so no secret character is ever rendered or
-    // boxed into an un-wipeable display object beyond the platform's own
-    // `target.text`.
+    // character count only — every character (including whitespace) is rendered
+    // as a bullet, so no secret character is ever read or rendered. This also
+    // prevents word-boundary / word-length leakage for multi-line mnemonics,
+    // where preserving spaces would reveal the BIP-39 word structure.
     // H13: a sensitive field can optionally reveal its content briefly (to let
     // the user verify an unrecoverable secret); auto-hides after 5s.
     var revealed by remember { mutableStateOf(false) }
@@ -114,8 +116,11 @@ fun SecureOutlinedTextField(
     }
     val showMask = masked && !revealed
     val displayText = remember(target.text, showMask) {
-        if (showMask) target.text.map { if (it.isWhitespace()) it else '•' }.joinToString("")
-        else target.text
+        if (showMask) {
+            CharArray(target.text.length) { '•' }.concatToString()
+        } else {
+            target.text
+        }
     }
 
     // Per-Text layouts, used to map a tap on the (split) content to a character
@@ -152,6 +157,10 @@ fun SecureOutlinedTextField(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) {
+                    // Clear any IME focus held by a non-secure field so the
+                    // system keyboard cannot capture input while the secure
+                    // field is active.
+                    focusManager.clearFocus()
                     controller?.let { c ->
                         // Tap toggles: bring up this field's keyboard, or dismiss if it's up.
                         if (c.target == target && c.isVisible) c.hide() else c.show(target, layoutType, supportsDecimal)

@@ -12,6 +12,16 @@ import com.ultrabytecoder.kryptakeep.ui.keyboard.components.KeyboardRow
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyCode
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
 
+/**
+ * Numeric numpad layout for PIN entry and amount input.
+ *
+ * Dual input path: when [onDigitClick] is provided (as in PIN screens),
+ * digits are routed directly to the ViewModel, bypassing the
+ * [KeyboardController]. The controller's `setInputEnabled(false)` has no
+ * effect on this path — the ViewModel must enforce its own input lock.
+ * When [onDigitClick] is null, digits flow through the controller's
+ * `onKey` dispatch (the standard path for Qwerty/Symbol layouts).
+ */
 @Composable
 fun NumericNumpadLayout(
     modifier: Modifier = Modifier,

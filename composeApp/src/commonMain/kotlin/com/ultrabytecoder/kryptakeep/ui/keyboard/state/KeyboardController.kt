@@ -12,15 +12,13 @@ import androidx.compose.runtime.setValue
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyCode
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
 
-data class KeyboardUiState(
-    val isVisible: Boolean = false,
-    val layoutType: KeyboardLayoutType = KeyboardLayoutType.Qwerty,
-    val isShifted: Boolean = false,
-    val supportsDecimal: Boolean = false
-)
-
 /**
  * Central state + event dispatcher for the in-app keyboard.
+ *
+ * Each UI-visible field is a separate [mutableStateOf] so that Compose
+ * snapshot invalidation is scoped: toggling Shift only re-composes the
+ * letter-key labels, not the layout switch or visibility — avoiding a full
+ * 30-key keyboard re-composition on every keystroke.
  *
  * Thread confinement: every mutator (`show`, `hide`, `onKey`, `insertChar`,
  * `deleteChar`) writes Compose snapshot state and MUST run on the Compose/UI
@@ -31,59 +29,73 @@ data class KeyboardUiState(
 class KeyboardController(
     var onAction: (() -> Unit)? = null
 ) {
-    private var _state: KeyboardUiState by mutableStateOf(KeyboardUiState())
+    private var _isVisible: Boolean by mutableStateOf(false)
+    private var _layoutType: KeyboardLayoutType by mutableStateOf(KeyboardLayoutType.Qwerty)
+    private var _isShifted: Boolean by mutableStateOf(false)
+    private var _supportsDecimal: Boolean by mutableStateOf(false)
     var activeTarget: KeyboardTarget? by mutableStateOf(null)
     // When false (e.g. a locked or in-flight screen) the keyboard is inert: no
     // characters are inserted/deleted. Set per-screen via setInputEnabled.
     private var inputEnabled = true
 
-    val isVisible: Boolean get() = _state.isVisible
+    val isVisible: Boolean get() = _isVisible
     val target: KeyboardTarget? get() = activeTarget
-    val layoutType: KeyboardLayoutType get() = _state.layoutType
-    val isShifted: Boolean get() = _state.isShifted
+    val layoutType: KeyboardLayoutType get() = _layoutType
+    val isShifted: Boolean get() = _isShifted
     // Derived from layoutType (single source of truth) so it can't drift (M1/M22).
-    val isSymbolsActive: Boolean get() = layoutType == KeyboardLayoutType.Symbols
-    val supportsDecimal: Boolean get() = _state.supportsDecimal
+    val isSymbolsActive: Boolean get() = _layoutType == KeyboardLayoutType.Symbols
+    val supportsDecimal: Boolean get() = _supportsDecimal
 
     fun show(target: KeyboardTarget, layout: KeyboardLayoutType = KeyboardLayoutType.Qwerty, supportsDecimal: Boolean = false) {
         activeTarget = target
-        _state = _state.copy(isVisible = true, layoutType = layout, isShifted = false, supportsDecimal = supportsDecimal)
+        _isVisible = true
+        _layoutType = layout
+        _isShifted = false
+        _supportsDecimal = supportsDecimal
     }
 
     fun showNumpad() {
-        _state = _state.copy(isVisible = true, layoutType = KeyboardLayoutType.Numeric, isShifted = false)
+        _isVisible = true
+        _layoutType = KeyboardLayoutType.Numeric
+        _isShifted = false
     }
 
     fun hide() {
-        _state = _state.copy(isVisible = false)
+        _isVisible = false
         activeTarget = null
     }
 
     fun onKey(key: KeyCode) {
         // Ignore key events outside an active input session — prevents shift/symbol
-        // state from drifting when no target is showing.
+        // state from drifting when no target is showing. Also gate on inputEnabled
+        // so a locked screen cannot toggle layout or shift state.
         if (!isVisible || activeTarget == null) return
+        if (!inputEnabled && key !is KeyCode.Action) return
         when (key) {
             is KeyCode.Letter -> {
-                val char = if (_state.isShifted) key.char.uppercaseChar() else key.char.lowercaseChar()
+                val char = if (_isShifted) key.char.uppercaseChar() else key.char.lowercaseChar()
                 insertChar(char)
-                if (_state.isShifted) _state = _state.copy(isShifted = false)
+                if (_isShifted) _isShifted = false
             }
             is KeyCode.Digit -> insertChar(key.digit)
+            is KeyCode.Symbol -> insertChar(key.char)
             is KeyCode.Space -> insertChar(' ')
             is KeyCode.Backspace -> deleteChar()
-            is KeyCode.Shift -> _state = _state.copy(isShifted = !_state.isShifted)
+            is KeyCode.Shift -> _isShifted = !_isShifted
             is KeyCode.SymbolToggle -> {
-                val next = if (_state.layoutType == KeyboardLayoutType.Symbols) {
+                _layoutType = if (_layoutType == KeyboardLayoutType.Symbols) {
                     KeyboardLayoutType.Qwerty
                 } else {
                     KeyboardLayoutType.Symbols
                 }
-                _state = _state.copy(layoutType = next, isShifted = false)
+                _isShifted = false
             }
             is KeyCode.Action -> {
-                onAction?.invoke()
-                hide()
+                try {
+                    onAction?.invoke()
+                } finally {
+                    hide()
+                }
             }
         }
     }

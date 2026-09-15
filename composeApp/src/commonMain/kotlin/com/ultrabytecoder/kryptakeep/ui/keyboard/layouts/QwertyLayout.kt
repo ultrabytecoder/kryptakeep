@@ -81,6 +81,7 @@ fun QwertyLayout(
             KeyboardKey(
                 label = " ",
                 onClick = { controller?.onKey(KeyCode.Space) },
+                contentDescription = "Space",
                 modifier = Modifier.weight(4f)
             )
             KeyboardKey(
