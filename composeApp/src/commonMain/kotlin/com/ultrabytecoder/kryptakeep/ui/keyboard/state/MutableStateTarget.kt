@@ -23,6 +23,18 @@ class MutableStateTarget(
         cursorIndex = i + 1
     }
 
+    override fun insertText(text: String) {
+        if (isFull() || text.isEmpty()) return
+        val source = if (isSingleLine) text.filter { it != '\n' && it != '\r' } else text
+        if (source.isEmpty()) return
+        val room = (maxLength - this.text.length).coerceAtLeast(0)
+        val toInsert = source.take(room)
+        if (toInsert.isEmpty()) return
+        val i = cursorIndex.coerceIn(0, this.text.length)
+        setter(this.text.substring(0, i) + toInsert + this.text.substring(i))
+        cursorIndex = i + toInsert.length
+    }
+
     override fun delete() {
         val current = text
         val i = cursorIndex.coerceIn(0, current.length)

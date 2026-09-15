@@ -37,6 +37,16 @@ import com.ultrabytecoder.kryptakeep.ui.keyboard.state.rememberKeyboardControlle
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.FeeSelectionMode
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.SendViewModel
 
+/**
+ * Cheap plausibility gate for a pasted recipient address. Enforces an alphanumeric
+ * character set (covers base58, bech32, hex — all chains) plus a sane length bound,
+ * so clipboard contents with symbols, whitespace, or zero-width / multi-line junk are
+ * rejected before they enter the field. Chain-specific validation still happens on
+ * submit; this only filters obviously-bad paste payloads.
+ */
+private fun isPlausibleAddress(value: String): Boolean =
+    value.length in 8..120 && value.all { it.isLetterOrDigit() }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SendScreen(
@@ -245,6 +255,8 @@ fun SendScreen(
                             layoutType = KeyboardLayoutType.Qwerty,
                             masked = false,
                             singleLine = true,
+                            pasteEnabled = true,
+                            pasteValidator = { isPlausibleAddress(it) },
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(16.dp)
                         )

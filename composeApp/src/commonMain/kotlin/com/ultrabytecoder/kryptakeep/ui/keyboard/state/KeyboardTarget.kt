@@ -14,6 +14,18 @@ interface KeyboardTarget {
     /** Cursor position (0..text.length); backed by snapshot state so the caret tracks it. */
     var cursorIndex: Int
     fun insert(char: Char)
+    /**
+     * Bulk-inserts [text] at the cursor, honoring [maxLength] and [isSingleLine].
+     * Default implementation inserts one character at a time so any [KeyboardTarget]
+     * gets paste support for free; adapters that own a buffer should override this
+     * to coalesce into a single state update (avoids per-char churn / re-wipes).
+     */
+    fun insertText(text: String) {
+        for (c in text) {
+            if (isFull()) break
+            insert(c)
+        }
+    }
     fun delete()
     fun clear()
     fun isFull(): Boolean = length >= maxLength

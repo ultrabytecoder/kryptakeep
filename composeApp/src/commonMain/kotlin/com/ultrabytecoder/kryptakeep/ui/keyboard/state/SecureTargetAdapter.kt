@@ -29,6 +29,23 @@ class SecureTargetAdapter(
         onValueChanged(state.text)
     }
 
+    override fun insertText(text: String) {
+        if (isFull() || text.isEmpty()) return
+        val source = if (isSingleLine) text.filter { it != '\n' && it != '\r' } else text
+        if (source.isEmpty()) return
+        val room = (maxLength - length).coerceAtLeast(0)
+        val toInsert = source.take(room)
+        if (toInsert.isEmpty()) return
+        val current = state.toCharArray()
+        val i = cursorIndex.coerceIn(0, current.size)
+        val newChars = current.copyOfRange(0, i) + toInsert.toCharArray() + current.copyOfRange(i, current.size)
+        current.wipe()
+        state.update(newChars)
+        newChars.wipe()
+        cursorIndex = i + toInsert.length
+        onValueChanged(state.text)
+    }
+
     override fun delete() {
         val current = state.toCharArray()
         val i = cursorIndex.coerceIn(0, current.size)

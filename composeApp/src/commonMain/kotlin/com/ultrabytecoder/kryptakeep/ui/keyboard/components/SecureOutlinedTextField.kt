@@ -43,6 +43,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -53,10 +55,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.ultrabytecoder.kryptakeep.ui.clipboard.clearPlatformClipboard
+import com.ultrabytecoder.kryptakeep.ui.clipboard.readPlatformClipboardText
 import com.ultrabytecoder.kryptakeep.ui.keyboard.model.KeyboardLayoutType
+import com.ultrabytecoder.kryptakeep.ui.keyboard.onPasteShortcut
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.KeyboardTarget
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.Clipboard
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
 import kotlinx.coroutines.delay
@@ -70,6 +76,9 @@ fun SecureOutlinedTextField(
     supportsDecimal: Boolean = false,
     masked: Boolean = true,
     revealable: Boolean = false,
+    pasteEnabled: Boolean = false,
+    pasteValidator: ((String) -> Boolean)? = null,
+    clearClipboardAfterPaste: Boolean = false,
     isError: Boolean = false,
     supportingText: @Composable (() -> Unit)? = null,
     placeholder: @Composable (() -> Unit)? = null,
@@ -84,6 +93,50 @@ fun SecureOutlinedTextField(
     val controller = LocalKeyboardController.current
     val focusManager = LocalFocusManager.current
     val isActive = controller?.isVisible == true && controller.activeTarget == target
+
+    // Optional validated clipboard paste (for non-secret fields such as recipient
+    // addresses). The field content stays focusable(false) / IME-blocked; paste is an
+    // explicit action (button tap, or Ctrl/Cmd+V on desktop) that reads the NATIVE
+    // clipboard once via the platform bridge, validates it, and inserts via the
+    // target. Secret fields never set pasteEnabled.
+    var pasteError by remember { mutableStateOf(false) }
+    LaunchedEffect(pasteError) {
+        if (pasteError) {
+            delay(3_000)
+            pasteError = false
+        }
+    }
+    val onPasteClick: () -> Unit = {
+        val cleaned = readPlatformClipboardText().orEmpty().trim()
+        when {
+            cleaned.isEmpty() -> Unit
+            pasteValidator?.invoke(cleaned) == false -> {
+                pasteError = true
+            }
+            else -> {
+                target.insertText(cleaned)
+                if (clearClipboardAfterPaste) {
+                    clearPlatformClipboard()
+                }
+            }
+        }
+    }
+
+    // Desktop Ctrl/Cmd+V shortcut: give the wrapper a (non-editable) focus while the
+    // field is active so it can receive the key event. The wrapper is not a text
+    // field, so no system IME InputConnection is created — the security model holds.
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(isActive, pasteEnabled) {
+        if (isActive && pasteEnabled) focusRequester.requestFocus()
+    }
+    val pasteShortcutModifier: Modifier = if (pasteEnabled) {
+        modifier
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPasteShortcut(enabled = isActive, onPaste = onPasteClick)
+    } else {
+        modifier
+    }
 
     // H9: wipe this field's buffer when the app is backgrounded (ON_STOP). Bound to
     // the FIELD (not the keyboard), so it fires even when the on-screen keyboard has
@@ -100,7 +153,7 @@ fun SecureOutlinedTextField(
     }
 
     val borderColor = when {
-        isError -> MaterialTheme.colorScheme.error
+        isError || (pasteEnabled && pasteError) -> MaterialTheme.colorScheme.error
         isActive -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.outline
     }
@@ -144,7 +197,7 @@ fun SecureOutlinedTextField(
     // growing without bound in an unconstrained column.
     val boxMaxHeight = 56.dp + 28.dp * (effectiveMaxLines - 1)
 
-    Column(modifier = modifier) {
+    Column(modifier = pasteShortcutModifier) {
         label?.let {
             Box(modifier = Modifier.padding(start = 16.dp, bottom = 4.dp)) { it() }
         }
@@ -300,13 +353,34 @@ fun SecureOutlinedTextField(
                         )
                     }
                 }
+                if (pasteEnabled) {
+                    IconButton(
+                        onClick = onPasteClick,
+                        enabled = enabled,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = FeatherIcons.Clipboard,
+                            contentDescription = "Paste",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
             }
         }
 
-        if (supportingText != null || isError) {
+        val showPasteHint = pasteEnabled && pasteError
+        if (supportingText != null || isError || showPasteHint) {
             Spacer(modifier = Modifier.height(4.dp))
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 supportingText?.invoke()
+                if (showPasteHint) {
+                    Text(
+                        text = "Invalid input - paste rejected",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
     }
