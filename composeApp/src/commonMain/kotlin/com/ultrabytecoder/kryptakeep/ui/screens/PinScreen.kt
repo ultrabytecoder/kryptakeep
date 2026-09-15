@@ -43,12 +43,7 @@ fun PinScreenSetup(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showRecoveryDialog by remember { mutableStateOf(false) }
-    val controller = rememberKeyboardController()
 
-    // PIN input is handled by the dedicated NumericNumpadLayout wired directly
-    // to the ViewModel. The controller-driven keyboard is not used on this
-    // pure-PIN screen, so we intentionally do not call showNumpad (which would
-    // render a second, inert numpad via AppKeyboard).
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
@@ -89,106 +84,104 @@ fun PinScreenSetup(
         )
     }
 
-    CompositionLocalProvider(LocalKeyboardController provides controller) {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Security") },
-                    navigationIcon = {
-                        if (!state.isConfirming && !state.isProcessing) {
-                            IconButton(onClick = { navController.popBackStack() }) {
-                                Icon(FeatherIcons.X, contentDescription = "Close")
-                            }
-                        }
-                    }
-                )
-            }
-        ) { paddingValues ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (state.isChoosingLength) {
-                        Text(
-                            "Choose PIN length",
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            "Select how many digits your PIN will have",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        Spacer(modifier = Modifier.height(32.dp))
-
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            PinConfig.PIN_LENGTH_OPTIONS.forEach { length ->
-                                PinLengthOption(
-                                    length = length,
-                                    onClick = { viewModel.selectPinLength(length) }
-                                )
-                            }
-                        }
-                    } else {
-                        Text(
-                            if (state.isConfirming) "Confirm your PIN"
-                            else if (state.recoveryMode) "Create a PIN (recovery)"
-                            else "Create a PIN",
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            if (state.isConfirming) "Re-enter the same PIN" else "Enter a ${state.pinLength}-digit PIN",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        Spacer(modifier = Modifier.height(32.dp))
-
-                        PinDotsInline(
-                            enteredLength = state.enteredPinLength,
-                            pinLength = state.pinLength
-                        )
-
-                        if (state.isProcessing) {
-                            Spacer(modifier = Modifier.height(16.dp))
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.dp
-                            )
-                        } else if (state.errorMessage != null) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                state.errorMessage!!,
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodySmall
-                            )
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Security") },
+                navigationIcon = {
+                    if (!state.isConfirming && !state.isProcessing) {
+                        IconButton(onClick = { navController.popBackStack() }) {
+                            Icon(FeatherIcons.X, contentDescription = "Close")
                         }
                     }
                 }
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (state.isChoosingLength) {
+                    Text(
+                        "Choose PIN length",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        "Select how many digits your PIN will have",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    if (!state.isChoosingLength) {
-                        NumericNumpadLayout(
-                            onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
-                            onDeleteClick = { viewModel.removeDigit() },
-                            isLocked = state.isLocked || state.isProcessing
+                    Spacer(modifier = Modifier.height(32.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        PinConfig.PIN_LENGTH_OPTIONS.forEach { length ->
+                            PinLengthOption(
+                                length = length,
+                                onClick = { viewModel.selectPinLength(length) }
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        if (state.isConfirming) "Confirm your PIN"
+                        else if (state.recoveryMode) "Create a PIN (recovery)"
+                        else "Create a PIN",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        if (state.isConfirming) "Re-enter the same PIN" else "Enter a ${state.pinLength}-digit PIN",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(32.dp))
+
+                    PinDotsInline(
+                        enteredLength = state.enteredPinLength,
+                        pinLength = state.pinLength
+                    )
+
+                    if (state.isProcessing) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else if (state.errorMessage != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            state.errorMessage!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
+                }
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (!state.isChoosingLength) {
+                    NumericNumpadLayout(
+                        onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
+                        onDeleteClick = { viewModel.removeDigit() },
+                        isLocked = state.isLocked || state.isProcessing
+                    )
                 }
             }
         }
@@ -237,11 +230,15 @@ fun PinScreenEnter(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val passwordField = remember { SecureTextFieldState() }
+    var hasPassword by remember { mutableStateOf(false) }
     val passwordTarget = remember {
         SecureTargetAdapter(
             state = passwordField,
             maxLength = 128,
-            onValueChanged = { viewModel.onPasswordInput(it) }
+            onValueChanged = {
+                hasPassword = it.isNotEmpty()
+                viewModel.onPasswordInput(it)
+            }
         )
     }
     val submit: () -> Unit = { viewModel.submitPassword() }
@@ -402,7 +399,7 @@ fun PinScreenEnter(
                         } else {
                             Button(
                                 onClick = submit,
-                                enabled = !state.isLocked && passwordField.text.isNotBlank(),
+                                enabled = !state.isLocked && hasPassword,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(52.dp)

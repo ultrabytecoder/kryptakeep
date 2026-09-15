@@ -479,7 +479,7 @@ class BtcProvider(
      * detection: an address is "used" when this is > 0, independent of whether
      * its UTXOs are still unspent.
      */
-    private suspend fun fetchAddressTxCount(client: HttpClient, address: String): Int {
+    private suspend fun fetchAddressTxCount(client: HttpClient, address: String): Long {
         var attempt = 0
         while (true) {
             attempt++
@@ -489,21 +489,23 @@ class BtcProvider(
                     val obj = Json.parseToJsonElement(response.body<String>()).jsonObject
                     val chainCount = obj["chain_stats"]?.jsonObject?.get("tx_count")?.jsonPrimitive?.longOrNull ?: 0L
                     val mempoolCount = obj["mempool_stats"]?.jsonObject?.get("tx_count")?.jsonPrimitive?.longOrNull ?: 0L
-                    return (chainCount + mempoolCount).toInt()
+                    return chainCount + mempoolCount
                 }
                 if (attempt < FETCH_TXCOUNT_MAX_ATTEMPTS) {
                     delay(FETCH_TXCOUNT_RETRY_DELAY_MS)
                     continue
                 }
                 println("fetchAddressTxCount: HTTP ${response.status.value} for $address after $attempt attempt(s)")
-                return 0
+                return 0L
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 if (attempt < FETCH_TXCOUNT_MAX_ATTEMPTS) {
                     delay(FETCH_TXCOUNT_RETRY_DELAY_MS)
                     continue
                 }
                 println("fetchAddressTxCount: failed for $address after $attempt attempt(s) — ${e.message}")
-                return 0
+                return 0L
             }
         }
     }

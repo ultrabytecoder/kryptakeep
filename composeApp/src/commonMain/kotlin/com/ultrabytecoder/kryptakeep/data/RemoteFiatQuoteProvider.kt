@@ -28,7 +28,8 @@ class RemoteFiatQuoteProvider(
     private val lock = Mutex()
 
     private var cache: Map<String, Double> = emptyMap()
-    private var loadedAt: Long = 0L
+    private var lastSuccessAt: Long = 0L
+    private var lastAttemptAt: Long = 0L
 
     override suspend fun getPrice(cryptoSymbol: String, fiat: FiatCurrency): Double {
         val snapshot = ensureLoaded()
@@ -38,13 +39,13 @@ class RemoteFiatQuoteProvider(
 
     private suspend fun ensureLoaded(): Map<String, Double> = lock.withLock {
         val now = clock()
-        // Back off on EVERY attempt (success or failure) so a down/unreachable
-        // endpoint is not hammered: within the TTL of the last attempt we serve the
-        // current cache as-is (stale values are preferred over none; an empty cache
-        // simply falls through to the fallback provider in getPrice).
-        if (now - loadedAt < ttlMillis) return@withLock cache
+        // On success: full TTL before refetching.
+        // On failure: short backoff (5s) so a transient blip doesn't suppress
+        // retries for the full TTL.
+        val effectiveTtl = if (cache.isEmpty()) FAILURE_BACKOFF_MS else ttlMillis
+        if (now - lastAttemptAt < effectiveTtl) return@withLock cache
 
-        loadedAt = now
+        lastAttemptAt = now
         try {
             val response = client.get("${networkConfig.exchangeRateApiBase}/api/v1/rates")
             if (response.status == HttpStatusCode.OK) {
@@ -59,10 +60,15 @@ class RemoteFiatQuoteProvider(
                     .toMap()
                 if (parsed.isNotEmpty()) {
                     cache = parsed
+                    lastSuccessAt = now
                 }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
         }
         cache
+    }
+
+    companion object {
+        private const val FAILURE_BACKOFF_MS = 5_000L
     }
 }

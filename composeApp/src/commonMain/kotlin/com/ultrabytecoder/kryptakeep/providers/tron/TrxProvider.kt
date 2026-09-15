@@ -79,7 +79,12 @@ class TrxProvider(
             val balanceSunStr = json["balance"]?.jsonPrimitive?.content ?: "0"
             // Parse the decimal sun value directly into a BigDecimal instead of
             // through Long, which would overflow above 2^63 sun.
-            return BigDecimal.parseString(balanceSunStr)
+            return try {
+                BigDecimal.parseString(balanceSunStr)
+            } catch (_: Exception) {
+                println("TrxProvider.balance: malformed balance '$balanceSunStr' for $address, defaulting to 0")
+                BigDecimal.ZERO
+            }
         } finally {
             client.close()
         }

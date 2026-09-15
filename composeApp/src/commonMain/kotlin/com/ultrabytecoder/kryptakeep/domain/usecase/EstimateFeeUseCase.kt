@@ -36,7 +36,7 @@ class EstimateFeeUseCase(
         recipientAddress: String? = null,
         feeParams: CustomFeeParams? = null
     ): FeeEstimation {
-        val key = "$accountId|$amount|$recipientAddress|${feeParams?.hashCode()}"
+        val key = "$accountId|$amount|$recipientAddress|$feeParams"
         val now = Clock.System.now().toEpochMilliseconds()
         
         // Return cached result if key matches and within TTL. The read is done

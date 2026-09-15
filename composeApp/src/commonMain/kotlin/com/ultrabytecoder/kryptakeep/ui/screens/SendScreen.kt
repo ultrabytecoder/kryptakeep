@@ -417,6 +417,8 @@ fun SendScreen(
                                         navController.navigate(Screen.TransactionSent(txid)) {
                                             popUpTo(Screen.AccountsList::class) { inclusive = false }
                                         }
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
                                     } catch (e: Exception) {
                                         isLoading = false
                                         snackbarHostState.showSnackbar("Failed: ${e.message}")
@@ -608,9 +610,14 @@ private fun FeeSelector(
             )
         }
         isTrx && !isNativeTrx -> {
-            val feeLimitSun = trc20FeeTarget.text.toLongOrNull() ?: 0L
-            val feeTrxWhole = feeLimitSun / 1_000_000
-            val feeTrxFrac = (feeLimitSun % 1_000_000).toString().padStart(6, '0')
+            val feeLimitSun = trc20FeeTarget.text.toLongOrNull()
+            val feeTrxText = if (feeLimitSun != null && feeLimitSun >= 0) {
+                val whole = feeLimitSun / 1_000_000
+                val frac = (feeLimitSun % 1_000_000).toString().padStart(6, '0')
+                "~$whole.$frac TRX"
+            } else {
+                "—"
+            }
             SecureOutlinedTextField(
                 target = trc20FeeTarget,
                 label = { Text("Fee Limit (SUN)") },
@@ -623,7 +630,7 @@ private fun FeeSelector(
                 isError = validationError != null,
                 supportingText = {
                     Text(
-                        text = "~${feeTrxWhole}.${feeTrxFrac} TRX",
+                        text = feeTrxText,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 },

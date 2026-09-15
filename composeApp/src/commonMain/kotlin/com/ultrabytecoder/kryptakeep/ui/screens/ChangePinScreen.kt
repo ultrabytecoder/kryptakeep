@@ -22,7 +22,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -50,11 +52,15 @@ fun ChangePinScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val passwordField = remember { SecureTextFieldState() }
+    var hasPassword by remember { mutableStateOf(false) }
     val passwordTarget = remember {
         SecureTargetAdapter(
             state = passwordField,
             maxLength = 128,
-            onValueChanged = { viewModel.onPasswordInput(it) }
+            onValueChanged = {
+                hasPassword = it.isNotEmpty()
+                viewModel.onPasswordInput(it)
+            }
         )
     }
     val submit: () -> Unit = { viewModel.submitPasswordStage() }
@@ -186,7 +192,7 @@ fun ChangePinScreen(
                         } else {
                             Button(
                                 onClick = submit,
-                                enabled = passwordField.text.isNotBlank(),
+                                enabled = hasPassword,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(52.dp)
