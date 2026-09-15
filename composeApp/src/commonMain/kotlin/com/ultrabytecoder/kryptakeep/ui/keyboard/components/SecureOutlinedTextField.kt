@@ -1,5 +1,10 @@
 package com.ultrabytecoder.kryptakeep.ui.keyboard.components
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,12 +17,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -38,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.password
 import androidx.compose.ui.semantics.semantics
@@ -133,9 +140,8 @@ fun SecureOutlinedTextField(
     // singleLine forces a single line (caps maxLines); minLines grows the min
     // height so multi-line fields (mnemonic) reserve room before scrolling.
     val effectiveMaxLines = if (singleLine) 1 else maxLines
-    // Cap the box at its max-line height. The inner content box uses fillMaxHeight,
-    // so without an upper bound it would absorb every free pixel in an unconstrained
-    // column (making one field ~2/3 of the screen once extra fields are present).
+    // Cap the box at its max-line height so multi-line fields scroll instead of
+    // growing without bound in an unconstrained column.
     val boxMaxHeight = 56.dp + 28.dp * (effectiveMaxLines - 1)
 
     Column(modifier = modifier) {
@@ -169,7 +175,7 @@ fun SecureOutlinedTextField(
                     }
                 }
                 .padding(horizontal = 16.dp, vertical = 12.dp),
-            contentAlignment = Alignment.CenterStart
+            contentAlignment = if (effectiveMaxLines > 1) Alignment.TopStart else Alignment.CenterStart
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -183,7 +189,6 @@ fun SecureOutlinedTextField(
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxHeight()
                         .then(if (effectiveMaxLines > 1) Modifier.verticalScroll(rememberScrollState()) else Modifier),
                     contentAlignment = Alignment.CenterStart
                 ) {
@@ -191,12 +196,7 @@ fun SecureOutlinedTextField(
                         Box(modifier = Modifier.alpha(0.5f)) {
                             placeholder()
                         }
-                    } else {
-                        // Split the display text at the cursor and render the caret
-                        // between the two runs so the caret sits exactly on the index.
-                        // Single-line fields support tap-to-position; multi-line keeps
-                        // the caret at the end (insert/delete still occur at the cursor).
-                        val singleLineField = effectiveMaxLines == 1
+                    } else if (effectiveMaxLines == 1) {
                         val text = displayText
                         val cursor = target.cursorIndex.coerceIn(0, text.length)
                         val before = text.substring(0, cursor)
@@ -210,9 +210,9 @@ fun SecureOutlinedTextField(
                                 text = before,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = contentColor,
-                                maxLines = effectiveMaxLines,
+                                maxLines = 1,
                                 onTextLayout = { beforeLayout = it },
-                                modifier = if (singleLineField && before.isNotEmpty()) Modifier.pointerInput(Unit) {
+                                modifier = if (before.isNotEmpty()) Modifier.pointerInput(Unit) {
                                     detectTapGestures { offset ->
                                         if (!enabledState.value) return@detectTapGestures
                                         controller?.show(target, layoutType, supportsDecimal)
@@ -228,9 +228,9 @@ fun SecureOutlinedTextField(
                                 text = after,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = contentColor,
-                                maxLines = effectiveMaxLines,
+                                maxLines = 1,
                                 onTextLayout = { afterLayout = it },
-                                modifier = if (singleLineField && after.isNotEmpty()) Modifier.pointerInput(Unit) {
+                                modifier = if (after.isNotEmpty()) Modifier.pointerInput(Unit) {
                                     detectTapGestures { offset ->
                                         if (!enabledState.value) return@detectTapGestures
                                         controller?.show(target, layoutType, supportsDecimal)
@@ -239,6 +239,48 @@ fun SecureOutlinedTextField(
                                     }
                                 } else Modifier
                             )
+                        }
+                    } else {
+                        var multiLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+                        val density = LocalDensity.current
+                        val contentColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = displayText,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = contentColor,
+                                maxLines = effectiveMaxLines,
+                                onTextLayout = { multiLayout = it },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            if (isActive) {
+                                val r = multiLayout
+                                val idx = target.cursorIndex.coerceIn(0, displayText.length)
+                                if (r != null) {
+                                    val rect = runCatching { r.getCursorRect(idx) }.getOrNull()
+                                    if (rect != null) {
+                                        val cursorAlpha by rememberInfiniteTransition().animateFloat(
+                                            initialValue = 1f,
+                                            targetValue = 0f,
+                                            animationSpec = infiniteRepeatable(
+                                                animation = tween(500),
+                                                repeatMode = RepeatMode.Reverse
+                                            )
+                                        )
+                                        val cursorX = with(density) { rect.left.toDp() }
+                                        val cursorY = with(density) { rect.top.toDp() }
+                                        val cursorHeight = with(density) { rect.height.toDp() }
+                                        Box(
+                                            modifier = Modifier
+                                                .offset(x = cursorX, y = cursorY)
+                                                .width(2.dp)
+                                                .height(cursorHeight)
+                                                .alpha(cursorAlpha)
+                                                .background(MaterialTheme.colorScheme.primary)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

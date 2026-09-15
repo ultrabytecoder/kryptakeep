@@ -17,6 +17,7 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
 import com.ultrabytecoder.kryptakeep.security.SecureMnemonicCode
 import com.ultrabytecoder.kryptakeep.ui.keyboard.components.AppKeyboard
+import com.ultrabytecoder.kryptakeep.ui.keyboard.components.MnemonicSuggestionBar
 import com.ultrabytecoder.kryptakeep.ui.keyboard.components.SecureOutlinedTextField
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
 import com.ultrabytecoder.kryptakeep.ui.keyboard.state.SecureTargetAdapter
@@ -54,6 +55,8 @@ fun CreateWalletSetupScreen(
         SecureTargetAdapter(
             state = mnemonicState,
             maxLength = 300,
+            maxLines = 5,
+            isSingleLine = false,
             onValueChanged = {
                 mnemonicError = null
                 viewModel.clearCreateError()
@@ -245,9 +248,16 @@ fun CreateWalletSetupScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else {
+                        // Deliberately NOT masked: during restore the user types a phrase
+                        // they already know and must visually verify every word — one
+                        // unnoticed typo means an unrecoverable wallet. Exposure is
+                        // controlled elsewhere: no system IME, semantics { password() }
+                        // (screen readers never announce it), and the buffer is wiped on
+                        // background (ON_STOP), screen dispose, and after consumption.
                         SecureOutlinedTextField(
                             target = mnemonicTarget,
                             label = { Text("Mnemonic") },
+                            masked = false,
                             isError = mnemonicError != null,
                             supportingText = mnemonicError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                             minLines = 3,
@@ -255,6 +265,14 @@ fun CreateWalletSetupScreen(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp)
                         )
+
+                        if (controller.activeTarget == mnemonicTarget) {
+                            MnemonicSuggestionBar(
+                                text = mnemonicTarget.text,
+                                onPick = { word -> mnemonicTarget.replaceTrailingWord(word) },
+                                enabled = !isCreating
+                            )
+                        }
 
                         Spacer(modifier = Modifier.height(16.dp))
 
@@ -354,7 +372,7 @@ fun CreateWalletSetupScreen(
                                 Button(
                                     onClick = nextAction,
                                     enabled = walletName.isNotBlank()
-                                        && !mnemonicState.isBlank()
+                                        && (mnemonicState.text.trim().split(Regex("\\s+")).count { it.isNotEmpty() } in SecureMnemonicCode.SUPPORTED_WORD_COUNTS)
                                         && (!usePassphrase || !passphraseState.isBlank())
                                         && !isCreating,
                                     modifier = Modifier.fillMaxWidth(),

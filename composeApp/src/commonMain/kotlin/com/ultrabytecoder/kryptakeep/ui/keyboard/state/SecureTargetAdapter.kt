@@ -55,4 +55,20 @@ class SecureTargetAdapter(
     override fun moveCursor(delta: Int) {
         setCursor(cursorIndex + delta)
     }
+
+    /**
+     * Replaces the partial word currently being typed (text after the last space)
+     * with [word] followed by a space, then parks the cursor at the end.
+     */
+    fun replaceTrailingWord(word: String) {
+        val current = state.toCharArray()
+        val lastSpace = current.indexOfLast { it == ' ' }
+        val start = if (lastSpace < 0) 0 else lastSpace + 1
+        val newChars = current.copyOfRange(0, start) + word.toCharArray() + ' '
+        current.wipe()
+        state.update(newChars)
+        newChars.wipe()
+        cursorIndex = state.text.length
+        onValueChanged(state.text)
+    }
 }
