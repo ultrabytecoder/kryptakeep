@@ -6,33 +6,42 @@ import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
 import com.ultrabytecoder.kryptakeep.domain.model.AccountType
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository as AccountRepositoryInterface
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 class AccountRepository(private val databaseProvider: DatabaseProvider) : AccountRepositoryInterface {
     private val queries get() = databaseProvider.database().kryptaKeepDatabaseQueries
 
-    override fun getAccountsByWalletFlow(walletId: Long): Flow<List<AccountInfo>> {
-        return queries.selectByWalletId(walletId)
-            .asFlow()
-            .mapToList(Dispatchers.Default)
-            .map { list -> list.map { it.toAccountInfo() } }
+    override fun getAccountsByWalletFlow(walletId: Long): Flow<List<AccountInfo>> = flow {
+        // Wrapped in flow{} so the (unlocked-DB) query is resolved only when the
+        // flow is collected, not when the Flow instance is constructed.
+        emitAll(
+            queries.selectByWalletId(walletId)
+                .asFlow()
+                .mapToList(Dispatchers.Default)
+                .map { list -> list.map { it.toAccountInfo() } }
+        )
     }
 
-    override fun getNativeAccountsByWalletFlow(walletId: Long): Flow<List<AccountInfo>> {
-        return queries.selectNativeAccountsByWalletId(walletId)
-            .asFlow()
-            .mapToList(Dispatchers.Default)
-            .map { list -> list.map { it.toAccountInfo() } }
+    override fun getNativeAccountsByWalletFlow(walletId: Long): Flow<List<AccountInfo>> = flow {
+        emitAll(
+            queries.selectNativeAccountsByWalletId(walletId)
+                .asFlow()
+                .mapToList(Dispatchers.Default)
+                .map { list -> list.map { it.toAccountInfo() } }
+        )
     }
 
-    override fun getTokensByParentFlow(parentId: String): Flow<List<AccountInfo>> {
-        return queries.selectTokensByParentId(parentId)
-            .asFlow()
-            .mapToList(Dispatchers.Default)
-            .map { list -> list.map { it.toAccountInfo() } }
+    override fun getTokensByParentFlow(parentId: String): Flow<List<AccountInfo>> = flow {
+        emitAll(
+            queries.selectTokensByParentId(parentId)
+                .asFlow()
+                .mapToList(Dispatchers.Default)
+                .map { list -> list.map { it.toAccountInfo() } }
+        )
     }
 
     override suspend fun getAccount(id: String): AccountInfo? = withContext(Dispatchers.IO) {

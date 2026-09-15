@@ -3,6 +3,7 @@ package com.ultrabytecoder.kryptakeep.security.hardware
 import com.ultrabytecoder.kryptakeep.data.appDataDir
 import com.ultrabytecoder.kryptakeep.data.restrictFileToOwner
 import com.ultrabytecoder.kryptakeep.security.AesGcmAuthenticationException
+import com.ultrabytecoder.kryptakeep.security.HardwareKeyCorruptedException
 import com.ultrabytecoder.kryptakeep.security.HardwareKeyInvalidatedException
 import com.ultrabytecoder.kryptakeep.security.wipe
 import java.io.File
@@ -32,6 +33,7 @@ class FileBackend : HardwareKeyBackend {
     private companion object {
         const val GCM_IV_LENGTH = 12
         const val GCM_TAG_BITS = 128
+        const val KEY_SIZE_BYTES = 32
     }
 
     private val baseDir = appDataDir()
@@ -43,7 +45,7 @@ class FileBackend : HardwareKeyBackend {
         if (!keyFile.exists()) {
             baseDir.mkdirs()
             val keyGenerator = KeyGenerator.getInstance("AES")
-            keyGenerator.init(256)
+            keyGenerator.init(KEY_SIZE_BYTES * 8)
             val key = keyGenerator.generateKey()
             val encoded = key.encoded
             try {
@@ -57,7 +59,21 @@ class FileBackend : HardwareKeyBackend {
             }
         }
         val encoded = keyFile.readBytes()
-        javax.crypto.spec.SecretKeySpec(encoded, "AES").also {
+        try {
+            // A key file of the wrong length is corruption, NOT a missing key:
+            // silently regenerating a fresh key would orphan every blob
+            // encrypted under the old one (permanent unreadable data). Surface
+            // it as corrupted so the caller routes to recovery instead.
+            if (encoded.size != KEY_SIZE_BYTES) {
+                throw HardwareKeyCorruptedException(
+                    "Device key file has invalid length ${encoded.size} (expected $KEY_SIZE_BYTES)"
+                )
+            }
+            // Pass a defensive copy to SecretKeySpec so wiping `encoded` in
+            // finally cannot zero the live key if the JDK implementation
+            // retains a reference to the original array.
+            return@synchronized javax.crypto.spec.SecretKeySpec(encoded.copyOf(), "AES")
+        } finally {
             encoded.wipe()
         }
     }

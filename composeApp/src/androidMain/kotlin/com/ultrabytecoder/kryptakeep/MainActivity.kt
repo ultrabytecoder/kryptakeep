@@ -6,6 +6,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.fragment.app.FragmentActivity
+import com.ultrabytecoder.kryptakeep.ui.keyboard.platform.SystemKeyboardBlockerContext
 import com.ultrabytecoder.kryptakeep.ui.util.applySecureFlag
 
 class MainActivity : FragmentActivity() {
@@ -14,14 +15,24 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
-        // Prevent screenshots / screen recordings / app-switcher previews of the
-        // whole app (wallets, balances, recovery phrases). Skipped in debug builds
-        // so scrcpy works during development / QA.
         window.applySecureFlag()
+
+        // Register the activity so secure screens can scope a one-shot system-IME
+        // dismiss to it. blockSystemKeyboard() is invoked from AppKeyboard only
+        // while the on-screen keyboard is showing — never app-wide — so non-secure
+        // fields elsewhere keep normal system-IME behavior.
+        SystemKeyboardBlockerContext.register(this)
 
         setContent {
             App()
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Drop the process-wide Activity reference so blockSystemKeyboard() can't
+        // act on a stale activity after process/activity recreation.
+        SystemKeyboardBlockerContext.clear()
     }
 }
 

@@ -10,6 +10,8 @@ import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
 import com.ultrabytecoder.kryptakeep.domain.service.KeyProvider
 import com.ultrabytecoder.kryptakeep.providers.ProviderFactory
 import kotlin.time.Clock
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class EstimateFeeUseCase(
     private val accountRepository: AccountRepository,
@@ -23,6 +25,10 @@ class EstimateFeeUseCase(
     private var cacheKey: String? = null
     private var cacheTimestamp: Long = 0L
     private val cacheTtl = 30_000L // 30 seconds
+    // Guards the shared cache fields so concurrent invocations never observe a
+    // torn (partially-updated) cache state. The slow estimateFee() call runs
+    // OUTSIDE the lock, so caching does not serialize fee estimation.
+    private val cacheMutex = Mutex()
 
     suspend operator fun invoke(
         accountId: String,
@@ -30,13 +36,15 @@ class EstimateFeeUseCase(
         recipientAddress: String? = null,
         feeParams: CustomFeeParams? = null
     ): FeeEstimation {
-        val key = "$accountId|$amount|$recipientAddress|${feeParams?.hashCode()}"
+        val key = "$accountId|$amount|$recipientAddress|$feeParams"
         val now = Clock.System.now().toEpochMilliseconds()
         
-        // Return cached result if key matches and within TTL
-        if (key == cacheKey && now - cacheTimestamp < cacheTtl) {
-            return cachedEstimation ?: throw IllegalStateException("Cache invalid")
+        // Return cached result if key matches and within TTL. The read is done
+        // under the lock so concurrent invocations never see a torn cache state.
+        val cached = cacheMutex.withLock {
+            if (key == cacheKey && now - cacheTimestamp < cacheTtl) cachedEstimation else null
         }
+        if (cached != null) return cached
 
         val account = accountRepository.getAccount(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
@@ -49,10 +57,13 @@ class EstimateFeeUseCase(
             provider.estimateFee(account.id, amount, recipientAddress, feeParams)
         }
         
-        // Update cache with new result
-        cachedEstimation = estimation
-        cacheKey = key
-        cacheTimestamp = now
+        // Update cache with new result. The write is done under the lock so the
+        // three cache fields are committed atomically.
+        cacheMutex.withLock {
+            cachedEstimation = estimation
+            cacheKey = key
+            cacheTimestamp = now
+        }
         
         return estimation
     }

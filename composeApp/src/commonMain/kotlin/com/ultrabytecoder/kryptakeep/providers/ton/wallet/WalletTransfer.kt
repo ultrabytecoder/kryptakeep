@@ -21,7 +21,8 @@ fun createWalletTransferV3(
     if (seqno == 0) {
         repeat(32) { signingMessage.storeBit(true) }
     } else {
-        signingMessage.storeUint((timeout ?: (kotlin.time.Clock.System.now().toEpochMilliseconds() / 1000 + 60).toInt()).toLong(), 32)
+        val timeoutSeconds = timeout?.toLong() ?: (kotlin.time.Clock.System.now().toEpochMilliseconds() / 1000 + 60)
+        signingMessage.storeUint(timeoutSeconds, 32)
     }
     signingMessage.storeUint(seqno.toLong(), 32)
     for (m in messages) {
@@ -53,7 +54,8 @@ fun createWalletTransferV4(
     if (seqno == 0) {
         repeat(32) { signingMessage.storeBit(true) }
     } else {
-        signingMessage.storeUint((timeout ?: (kotlin.time.Clock.System.now().toEpochMilliseconds() / 1000 + 60).toInt()).toLong(), 32)
+        val timeoutSeconds = timeout?.toLong() ?: (kotlin.time.Clock.System.now().toEpochMilliseconds() / 1000 + 60)
+        signingMessage.storeUint(timeoutSeconds, 32)
     }
     signingMessage.storeUint(seqno.toLong(), 32)
     signingMessage.storeUint(0, 8) // Simple order
