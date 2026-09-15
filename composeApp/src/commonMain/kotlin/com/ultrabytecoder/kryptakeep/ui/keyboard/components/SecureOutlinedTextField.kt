@@ -126,6 +126,10 @@ fun SecureOutlinedTextField(
     // singleLine forces a single line (caps maxLines); minLines grows the min
     // height so multi-line fields (mnemonic) reserve room before scrolling.
     val effectiveMaxLines = if (singleLine) 1 else maxLines
+    // Cap the box at its max-line height. The inner content box uses fillMaxHeight,
+    // so without an upper bound it would absorb every free pixel in an unconstrained
+    // column (making one field ~2/3 of the screen once extra fields are present).
+    val boxMaxHeight = 56.dp + 28.dp * (effectiveMaxLines - 1)
 
     Column(modifier = modifier) {
         label?.let {
@@ -135,7 +139,7 @@ fun SecureOutlinedTextField(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 56.dp + 28.dp * (minLines - 1))
+                .heightIn(min = 56.dp + 28.dp * (minLines - 1), max = boxMaxHeight)
                 // Deliberately out of the IME focus chain: input only flows through the
                 // on-screen keyboard, so no system input method can observe the secret.
                 .focusable(false)
