@@ -1,4 +1,13 @@
 import java.util.Properties
+import java.io.BufferedOutputStream
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.TaskAction
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -268,6 +277,64 @@ sqldelight {
     // do not link the system SQLite or the encrypted binary would be mislinked.
     linkSqlite.set(false)
 }
+
+// The Compose `packageUberJarForCurrentOS` uber jar bundles signed third-party
+// dependencies (e.g. BouncyCastle) whose META-INF signature files make the JVM
+// throw "Invalid signature file digest for Manifest main attributes" once the jar
+// is repackaged. Strip those signature entries from the final jar so `java -jar`
+// works out of the box (all entries in this jar are deflated, so rewriting is safe).
+abstract class StripUberJarSignaturesTask : DefaultTask() {
+    @get:Internal
+    abstract val jarsDir: DirectoryProperty
+
+    @TaskAction
+    fun run() {
+        val sigExtensions = listOf("SF", "DSA", "RSA", "EC")
+        val dir = jarsDir.get().asFile
+        for (jar in dir.listFiles()?.filter { it.name.endsWith(".jar") } ?: emptyList()) {
+            val zip = ZipFile(jar)
+            val removed = mutableListOf<String>()
+            val tmp = File(jar.parentFile, "${jar.name}.unsigned")
+            ZipOutputStream(BufferedOutputStream(FileOutputStream(tmp))).use { out ->
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    val isSig = !entry.isDirectory && entry.name.startsWith("META-INF/") &&
+                        sigExtensions.any { entry.name.endsWith(".$it") }
+                    if (isSig) {
+                        removed.add(entry.name)
+                        continue
+                    }
+                    val newEntry = ZipEntry(entry.name)
+                    newEntry.time = entry.time
+                    out.putNextEntry(newEntry)
+                    if (!entry.isDirectory) zip.getInputStream(entry).use { it.copyTo(out) }
+                    out.closeEntry()
+                }
+            }
+            zip.close()
+            if (removed.isNotEmpty()) {
+                tmp.copyTo(jar, overwrite = true)
+                tmp.delete()
+                logger.lifecycle("stripUberJarSignatures: removed $removed from ${jar.name}")
+            } else {
+                tmp.delete()
+            }
+        }
+    }
+}
+
+val stripUberJarSignatures = tasks.register<StripUberJarSignaturesTask>("stripUberJarSignatures") {
+    group = "kryptakeep"
+    description = "Removes signature files from signed deps in the packaged desktop uber jar."
+    jarsDir.set(project.layout.buildDirectory.dir("compose/jars"))
+}
+
+// `packageUberJarForCurrentOS` is created by the compose plugin when the
+// `compose.desktop` block below is evaluated, so wire it lazily (configureEach)
+// rather than with tasks.named, which would run before the task exists.
+tasks.matching { it.name == "packageUberJarForCurrentOS" }
+    .configureEach { finalizedBy(stripUberJarSignatures) }
 
 compose.desktop {
     application {
