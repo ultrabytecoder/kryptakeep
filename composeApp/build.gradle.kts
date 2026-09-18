@@ -219,7 +219,7 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
-        versionName = "1.0"
+        versionName = "0.9.0"
     }
 
     buildFeatures {
@@ -343,7 +343,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Msi, TargetFormat.Dmg)
             packageName = "KryptaKeep"
-            packageVersion = "1.0.0"
+            packageVersion = "0.9.0"
             windows {
                 menuGroup = "KryptaKeep"
                 shortcut = true
