@@ -1,12 +1,13 @@
 package com.ultrabytecoder.kryptakeep
 
 import android.os.Bundle
-import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.fragment.app.FragmentActivity
+import com.ultrabytecoder.kryptakeep.ui.keyboard.platform.SystemKeyboardBlockerContext
+import com.ultrabytecoder.kryptakeep.ui.util.applySecureFlag
 
 class MainActivity : FragmentActivity() {
 
@@ -14,16 +15,24 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
-        // Prevent screenshots / screen recordings / app-switcher previews of the
-        // whole app (wallets, balances, recovery phrases).
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
+        window.applySecureFlag()
+
+        // Register the activity so secure screens can scope a one-shot system-IME
+        // dismiss to it. blockSystemKeyboard() is invoked from AppKeyboard only
+        // while the on-screen keyboard is showing — never app-wide — so non-secure
+        // fields elsewhere keep normal system-IME behavior.
+        SystemKeyboardBlockerContext.register(this)
 
         setContent {
             App()
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Drop the process-wide Activity reference so blockSystemKeyboard() can't
+        // act on a stale activity after process/activity recreation.
+        SystemKeyboardBlockerContext.clear()
     }
 }
 

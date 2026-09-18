@@ -3,22 +3,23 @@ package com.ultrabytecoder.kryptakeep.platform
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.view.WindowManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import com.ultrabytecoder.kryptakeep.ui.util.applySecureFlag
+import com.ultrabytecoder.kryptakeep.ui.util.clearSecureFlag
 
 class AndroidScreenshotProtector(
     private val activity: Activity
 ) : ScreenshotProtector {
 
     override fun enable() {
-        activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        activity.window.applySecureFlag()
     }
 
     override fun disable() {
         val window = activity.window ?: return
-        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        window.clearSecureFlag()
     }
 }
 

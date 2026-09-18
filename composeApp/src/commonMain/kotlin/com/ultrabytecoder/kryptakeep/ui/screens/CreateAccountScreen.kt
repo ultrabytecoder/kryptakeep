@@ -75,7 +75,7 @@ private fun buildCreatableItems(networkConfig: NetworkConfig): List<CreatableIte
         CreatableItem.Native("Bitcoin (BTC)", "BTC", Color(0xFFF7931A), Res.drawable.ic_btc, DomainAccountType.Btc),
         CreatableItem.Native("Ethereum (ETH)", "ETH", Color(0xFF627EEA), Res.drawable.ic_eth, DomainAccountType.Eth),
         CreatableItem.Native("TRON (TRX)", "TRX", Color(0xFFFF0013), Res.drawable.ic_trx, DomainAccountType.Trx),
-        CreatableItem.Native("TON (TON)", "TON", Color(0xFF0098EA), Res.drawable.ic_ton, DomainAccountType.Ton("V3R2"))
+        CreatableItem.Native("Gram (GRAM)", "GRAM", Color(0xFF0098EA), Res.drawable.ic_ton, DomainAccountType.Ton("V3R2"))
     )
     val erc20 = networkConfig.erc20Tokens.map { (symbol, info) ->
         val type = DomainAccountType.Erc20(info.address)
@@ -263,7 +263,7 @@ fun CreateAccountScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Wallet version — only for TON
+            // Wallet version — only for GRAM
             if (isTon) {
                 Text(
                     "Wallet Version",

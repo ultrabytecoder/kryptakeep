@@ -3,6 +3,7 @@ package com.ultrabytecoder.kryptakeep.ui.util
 import kotlin.math.absoluteValue
 
 fun formatFiat(amount: Double, currencyCode: String): String {
+    if (amount > 0.0 && amount < 0.005) return "< 0.01 $currencyCode"
     val rounded = (amount * 100.0).roundHalfUp() / 100.0
     val negative = rounded < 0.0
     val absValue = rounded.absoluteValue

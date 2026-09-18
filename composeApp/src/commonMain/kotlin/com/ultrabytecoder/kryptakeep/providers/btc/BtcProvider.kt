@@ -65,6 +65,10 @@ class BtcProvider(
         private const val RECEIVE_CHAIN = 0
         private const val CHANGE_CHAIN = 1
 
+        // Retry budget for fetchAddressTxCount (BIP44 gap-limit probing).
+        private const val FETCH_TXCOUNT_MAX_ATTEMPTS = 3
+        private const val FETCH_TXCOUNT_RETRY_DELAY_MS = 250L
+
         // P2WPKH size constants (bytes)
         private const val P2WPKH_INPUT_BASE_SIZE = 41L  // outpoint(36) + scriptSig varint(1) + sequence(4)
         private const val P2WPKH_OUTPUT_SIZE = 31L      // 8(value) + 1(len) + 22(script)
@@ -405,13 +409,14 @@ class BtcProvider(
             val address = Bitcoin.computeBIP84Address(key.publicKey, networkConfig.btcGenesisBlockHash)
             val derivationPath = "m/84'/${networkConfig.btcBip84CoinType}'/$derivationIndex'/$chain/$addressIndex"
 
-            val utxos = fetchUtxos(client, address)
-            if (utxos.isEmpty()) {
-                consecutiveEmpty++
-            } else {
+            // An address counts as "used" if it has ANY transaction history (chain
+            // or mempool), not merely unspent UTXOs. Using unspent-only here would
+            // treat a fully-spent address as empty and stop the scan early, missing
+            // later receive addresses (undercounting the balance).
+            if (fetchAddressTxCount(client, address) > 0) {
                 consecutiveEmpty = 0
                 highestUsedIndex = addressIndex
-                for (utxo in utxos) {
+                for (utxo in fetchUtxos(client, address)) {
                     val outpoint = "${utxo.txid}:${utxo.vout}"
                     seenOutpoints.add(outpoint)
                     if (outpoint !in existingTxids) {
@@ -426,6 +431,8 @@ class BtcProvider(
                         )
                     }
                 }
+            } else {
+                consecutiveEmpty++
             }
             addressIndex++
         }
@@ -460,6 +467,46 @@ class BtcProvider(
         } catch (e: Exception) {
             println("fetchUtxos: failed for $address — ${e.message}")
             emptyList()
+        }
+    }
+
+    /**
+     * Total number of transactions (confirmed + mempool) involving [address],
+     * from the mempool.space address summary. Returns 0 if the address has no
+     * history. Transient HTTP/network failures are retried a few times before
+     * giving up and returning 0 — treating a blip as "no history" would let the
+     * BIP44 gap-limit stop early and undercount the balance. Used for gap-limit
+     * detection: an address is "used" when this is > 0, independent of whether
+     * its UTXOs are still unspent.
+     */
+    private suspend fun fetchAddressTxCount(client: HttpClient, address: String): Long {
+        var attempt = 0
+        while (true) {
+            attempt++
+            try {
+                val response: HttpResponse = client.get("${networkConfig.btcMempoolApiBase}/address/$address")
+                if (response.status == HttpStatusCode.OK) {
+                    val obj = Json.parseToJsonElement(response.body<String>()).jsonObject
+                    val chainCount = obj["chain_stats"]?.jsonObject?.get("tx_count")?.jsonPrimitive?.longOrNull ?: 0L
+                    val mempoolCount = obj["mempool_stats"]?.jsonObject?.get("tx_count")?.jsonPrimitive?.longOrNull ?: 0L
+                    return chainCount + mempoolCount
+                }
+                if (attempt < FETCH_TXCOUNT_MAX_ATTEMPTS) {
+                    delay(FETCH_TXCOUNT_RETRY_DELAY_MS)
+                    continue
+                }
+                println("fetchAddressTxCount: HTTP ${response.status.value} for $address after $attempt attempt(s)")
+                return 0L
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (attempt < FETCH_TXCOUNT_MAX_ATTEMPTS) {
+                    delay(FETCH_TXCOUNT_RETRY_DELAY_MS)
+                    continue
+                }
+                println("fetchAddressTxCount: failed for $address after $attempt attempt(s) — ${e.message}")
+                return 0L
+            }
         }
     }
 

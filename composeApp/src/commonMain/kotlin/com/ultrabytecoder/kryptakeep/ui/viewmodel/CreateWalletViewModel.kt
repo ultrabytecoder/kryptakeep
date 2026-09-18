@@ -5,14 +5,16 @@ import androidx.lifecycle.viewModelScope
 import com.ultrabytecoder.kryptakeep.domain.usecase.CreateWalletUseCase
 import com.ultrabytecoder.kryptakeep.security.EntropyCombiner
 import com.ultrabytecoder.kryptakeep.security.SecureMnemonicCode
+import com.ultrabytecoder.kryptakeep.security.gcHint
 import com.ultrabytecoder.kryptakeep.security.wipe
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -41,11 +43,14 @@ class CreateWalletViewModel(
     private val _finalMnemonic = MutableStateFlow<CharArray?>(null)
     val finalMnemonic: StateFlow<CharArray?> = _finalMnemonic.asStateFlow()
 
-    // One-shot creation events. A rendezvous Channel is thread-safe (the
-    // creation coroutine sends from Dispatchers.Default, the flow collects on
+    // One-shot creation events. A replay-1 SharedFlow is thread-safe (the
+    // creation coroutine emits from Dispatchers.Default, the flow collects on
     // Main) and delivers the event instantly — no polling, no retained value
-    // that a recomposition could re-observe.
-    private val createdWalletChannel = Channel<Long>(Channel.CONFLATED)
+    // that a recomposition could re-observe. Unlike a raw channel, every
+    // collector receives the event, so a second collector can never steal the
+    // navigation.
+    private val _walletCreated = MutableSharedFlow<Long>(replay = 1, extraBufferCapacity = 1)
+    val walletCreated: SharedFlow<Long> = _walletCreated.asSharedFlow()
 
     private val _mode = MutableStateFlow(Mode.GENERATE_NEW)
     val mode: StateFlow<Mode> = _mode.asStateFlow()
@@ -106,16 +111,20 @@ class CreateWalletViewModel(
     }
 
     /**
-     * Takes ownership of [passphrase], wiping the previous one. An empty
-     * [chars] is ignored when a non-empty passphrase is already set: the
-     * passphrase screen's local state is lost on back-navigation, and a
-     * stale "skip" submission must never silently drop a configured
-     * passphrase.
+     * Takes ownership of [chars], wiping the previous passphrase. An empty
+     * [chars] clears the passphrase — the UI decides intent explicitly
+     * (checkbox state), so a stale "skip" can never silently retain an
+     * unintended passphrase.
      */
     fun setPassphrase(chars: CharArray) {
-        if (chars.isEmpty() && passphrase.isNotEmpty()) return
         passphrase.wipe()
         passphrase = chars
+    }
+
+    /** Clears any configured passphrase. */
+    fun clearPassphrase() {
+        passphrase.wipe()
+        passphrase = CharArray(0)
     }
 
     /** True when a non-empty passphrase has been configured. */
@@ -127,9 +136,12 @@ class CreateWalletViewModel(
      * generated from THIS digest, never from the previous gesture.
      */
     fun storeGestureDigest(digest: ByteArray) {
+        // Cancel the in-flight generation BEFORE wiping the old digest: the
+        // generate coroutine may still be reading it on Dispatchers.Default,
+        // and wiping mid-read would corrupt the combined entropy.
+        invalidateGenerated()
         gestureDigest?.wipe()
         gestureDigest = digest
-        invalidateGenerated()
     }
 
     fun proceedFromSetup() {
@@ -169,7 +181,11 @@ class CreateWalletViewModel(
         if (_finalMnemonic.value != null) return
         if (generateJob?.isActive == true) return
         generateJob = viewModelScope.launch(Dispatchers.Default) {
-            val mnemonic = EntropyCombiner.generate(_wordCount.value, gestureDigest)
+            // Defensive copy: storeGestureDigest may replace/wipe the field
+            // while this coroutine is running.
+            val digestCopy = gestureDigest?.copyOf()
+            val mnemonic = EntropyCombiner.generate(_wordCount.value, digestCopy)
+            digestCopy?.wipe()
             if (isActive) {
                 _finalMnemonic.value = mnemonic
             } else {
@@ -195,26 +211,33 @@ class CreateWalletViewModel(
         val name = walletName.trim()
         val pass = passphrase.copyOf()
         viewModelScope.launch(Dispatchers.Default) {
-            val result = try {
-                val walletId = createWalletUseCase(name, mnemonic, pass)
-                Result.Success(walletId)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Result.Error(e.message ?: "Invalid mnemonic")
-            } finally {
-                mnemonic.wipe()
-                pass.wipe()
-            }
-            when (result) {
-                is Result.Success -> {
-                    passphrase.wipe()
-                    passphrase = CharArray(0)
-                    createdWalletChannel.trySend(result.walletId)
+            try {
+                val result = try {
+                    val walletId = createWalletUseCase(name, mnemonic, pass)
+                    Result.Success(walletId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Result.Error(userSafeMessage(e))
+                } finally {
+                    mnemonic.wipe()
+                    pass.wipe()
                 }
-                is Result.Error -> _createError.value = result.message
+                when (result) {
+                    is Result.Success -> {
+                        clearPassphrase()
+                        // The wallet is already in the DB; the navigation
+                        // event must fire even if the coroutine is cancelled
+                        // right after the insert. tryEmit never suspends
+                        // (replay + buffer absorb it), so no NonCancellable
+                        // wrapper is needed.
+                        _walletCreated.tryEmit(result.walletId)
+                    }
+                    is Result.Error -> _createError.value = result.message
+                }
+            } finally {
+                _isCreating.value = false
             }
-            _isCreating.value = false
         }
     }
 
@@ -224,49 +247,63 @@ class CreateWalletViewModel(
         _createError.value = null
         _isCreating.value = true
         // Snapshot the passphrase on the calling (Main) thread (see
-        // createWalletFromMnemonic). The final mnemonic is only wiped on
-        // success below, so holding the reference across the DB write is safe.
+        // createWalletFromMnemonic). The final mnemonic is copied here so the
+        // DB write runs on a buffer that invalidateGenerated cannot wipe
+        // mid-flight.
         val name = walletName.trim()
         val pass = passphrase.copyOf()
+        val mnemonicCopy = _finalMnemonic.value?.copyOf()
         viewModelScope.launch(Dispatchers.Default) {
-            val mnemonic = _finalMnemonic.value
-            val result = if (mnemonic == null) {
-                Result.Error("Mnemonic not generated")
-            } else {
-                try {
-                    val walletId = createWalletUseCase(name, mnemonic, pass)
-                    Result.Success(walletId)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Result.Error(e.message ?: "Wallet creation failed")
+            try {
+                val result = if (mnemonicCopy == null) {
+                    Result.Error("Mnemonic not generated")
+                } else {
+                    try {
+                        val walletId = createWalletUseCase(name, mnemonicCopy, pass)
+                        Result.Success(walletId)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Result.Error(userSafeMessage(e))
+                    }
                 }
-            }
-            pass.wipe()
-            when (result) {
-                is Result.Success -> {
-                    _finalMnemonic.value?.wipe()
-                    _finalMnemonic.value = null
-                    gestureDigest?.wipe()
-                    gestureDigest = null
-                    passphrase.wipe()
-                    passphrase = CharArray(0)
-                    createdWalletChannel.trySend(result.walletId)
+                when (result) {
+                    is Result.Success -> {
+                        _finalMnemonic.value?.wipe()
+                        _finalMnemonic.value = null
+                        gestureDigest?.wipe()
+                        gestureDigest = null
+                        clearPassphrase()
+                        gcHint()
+                        // The wallet is already in the DB; the navigation
+                        // event must fire even if the coroutine is cancelled
+                        // right after the insert. tryEmit never suspends
+                        // (replay + buffer absorb it), so no NonCancellable
+                        // wrapper is needed.
+                        _walletCreated.tryEmit(result.walletId)
+                    }
+                    is Result.Error -> {
+                        // The generated mnemonic is no longer usable after a
+                        // failed creation; wipe it so the secret does not
+                        // linger in memory past its necessary lifetime.
+                        _finalMnemonic.value?.wipe()
+                        _finalMnemonic.value = null
+                        _createError.value = result.message
+                    }
                 }
-                is Result.Error -> _createError.value = result.message
+            } finally {
+                mnemonicCopy?.wipe()
+                pass.wipe()
+                _isCreating.value = false
             }
-            _isCreating.value = false
         }
     }
 
-    /**
-     * One-shot creation events. The flow collects this exactly once per
-     * successful creation; the channel is conflated so a late collector still
-     * receives the most recent event, and each event is delivered to a single
-     * collector (no double navigation on recomposition).
-     */
-    val createdWalletEvents: ReceiveChannel<Long>
-        get() = createdWalletChannel
+    /** Maps an exception to a user-safe message; raw messages may leak internals. */
+    private fun userSafeMessage(e: Exception): String = when (e) {
+        is IllegalArgumentException -> "The recovery phrase is invalid. Please check your words."
+        else -> "Wallet creation failed. Please try again."
+    }
 
     private fun invalidateGenerated() {
         // Cancel any in-flight generation so it cannot publish a mnemonic
@@ -285,6 +322,6 @@ class CreateWalletViewModel(
         gestureDigest?.wipe()
         _finalMnemonic.value?.wipe()
         _finalMnemonic.value = null
-        createdWalletChannel.close()
+        gcHint()
     }
 }

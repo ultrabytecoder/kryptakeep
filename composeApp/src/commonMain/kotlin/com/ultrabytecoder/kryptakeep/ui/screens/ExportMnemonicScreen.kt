@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -25,11 +24,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,13 +37,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -60,6 +55,11 @@ import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.platform.preventScreenshots
 import com.ultrabytecoder.kryptakeep.security.wipe
 import com.ultrabytecoder.kryptakeep.ui.components.Numpad
+import com.ultrabytecoder.kryptakeep.ui.keyboard.components.AppKeyboard
+import com.ultrabytecoder.kryptakeep.ui.keyboard.components.SecureOutlinedTextField
+import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
+import com.ultrabytecoder.kryptakeep.ui.keyboard.state.SecureTargetAdapter
+import com.ultrabytecoder.kryptakeep.ui.keyboard.state.rememberKeyboardController
 import com.ultrabytecoder.kryptakeep.ui.util.SecureScreen
 import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.ExportMnemonicViewModel
@@ -87,20 +87,22 @@ private fun ExportMnemonicScreenInner(
     var copied by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
     val passwordField = remember { SecureTextFieldState() }
+    val passwordTarget = remember {
+        SecureTargetAdapter(
+            state = passwordField,
+            maxLength = 128,
+            onValueChanged = { viewModel.onPasswordInput(it) }
+        )
+    }
+    val submit: () -> Unit = { viewModel.submitPassword() }
+    val controller = rememberKeyboardController(onAction = submit)
 
     remember {
         viewModel.onClipboardClear = { clipboardManager.setText(AnnotatedString("")) }
     }
-    val focusRequester = remember { FocusRequester() }
 
     DisposableEffect(Unit) {
         onDispose { passwordField.wipe() }
-    }
-
-    LaunchedEffect((state as? ExportMnemonicViewModel.State.AuthRequired)?.securityMethod) {
-        if ((state as? ExportMnemonicViewModel.State.AuthRequired)?.securityMethod == SecurityMethod.PASSWORD) {
-            focusRequester.requestFocus()
-        }
     }
 
     LaunchedEffect(copied) {
@@ -110,6 +112,7 @@ private fun ExportMnemonicScreenInner(
         }
     }
 
+    CompositionLocalProvider(LocalKeyboardController provides controller) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -133,6 +136,18 @@ private fun ExportMnemonicScreenInner(
                 is ExportMnemonicViewModel.State.AuthRequired -> {
                     val auth = state as ExportMnemonicViewModel.State.AuthRequired
                     val isPassword = auth.securityMethod == SecurityMethod.PASSWORD
+
+                    // Password mode drives the on-screen keyboard; PIN mode uses the
+                    // dedicated numpad wired directly to the ViewModel.
+                    LaunchedEffect(isPassword) {
+                        if (isPassword) controller.show(passwordTarget)
+                    }
+                    LaunchedEffect(auth.isLocked, auth.isProcessing) {
+                        controller.setInputEnabled(!auth.isLocked && !auth.isProcessing)
+                    }
+                    DisposableEffect(Unit) {
+                        onDispose { controller.hide() }
+                    }
 
                     // Shake animation — triggers on each new shakeTriggerId
                     val shakeAnimatable = remember { Animatable(0f) }
@@ -175,18 +190,12 @@ private fun ExportMnemonicScreenInner(
                             Spacer(modifier = Modifier.height(32.dp))
 
                             if (isPassword) {
-                                OutlinedTextField(
-                                    value = passwordField.text,
-                                    onValueChange = {
-                                        passwordField.update(it)
-                                        viewModel.onPasswordInput(it)
-                                    },
-                                    visualTransformation = PasswordVisualTransformation(),
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                SecureOutlinedTextField(
+                                    target = passwordTarget,
+                                    label = null,
                                     singleLine = true,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .focusRequester(focusRequester)
                                         .offset { IntOffset(shakeOffset.toInt(), 0) },
                                     isError = auth.errorMessage != null,
                                     enabled = !auth.isLocked && !auth.isProcessing
@@ -228,7 +237,7 @@ private fun ExportMnemonicScreenInner(
                                 Spacer(modifier = Modifier.height(16.dp))
                             } else {
                                 Button(
-                                    onClick = { viewModel.submitPassword() },
+                                    onClick = submit,
                                     enabled = !auth.isLocked && passwordField.text.isNotBlank(),
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -237,6 +246,8 @@ private fun ExportMnemonicScreenInner(
                                     Text("Verify", style = MaterialTheme.typography.titleMedium)
                                 }
                             }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            AppKeyboard()
                         } else {
                             Numpad(
                                 onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
@@ -391,5 +402,6 @@ private fun ExportMnemonicScreenInner(
                 }
             }
         }
+    }
     }
 }

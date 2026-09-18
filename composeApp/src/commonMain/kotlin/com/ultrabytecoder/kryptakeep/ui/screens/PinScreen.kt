@@ -7,17 +7,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -28,7 +23,12 @@ import com.ultrabytecoder.kryptakeep.domain.repository.PinConfig
 import com.ultrabytecoder.kryptakeep.domain.repository.SecurityMethod
 import com.ultrabytecoder.kryptakeep.navigation.Screen
 import com.ultrabytecoder.kryptakeep.security.wipe
-import com.ultrabytecoder.kryptakeep.ui.components.Numpad
+import com.ultrabytecoder.kryptakeep.ui.keyboard.components.AppKeyboard
+import com.ultrabytecoder.kryptakeep.ui.keyboard.components.SecureOutlinedTextField
+import com.ultrabytecoder.kryptakeep.ui.keyboard.layouts.NumericNumpadLayout
+import com.ultrabytecoder.kryptakeep.ui.keyboard.state.LocalKeyboardController
+import com.ultrabytecoder.kryptakeep.ui.keyboard.state.SecureTargetAdapter
+import com.ultrabytecoder.kryptakeep.ui.keyboard.state.rememberKeyboardController
 import com.ultrabytecoder.kryptakeep.ui.util.SecureTextFieldState
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.EnterPinEvent
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.EnterPinViewModel
@@ -42,18 +42,46 @@ fun PinScreenSetup(
     viewModel: SetupPinViewModel
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var showRecoveryDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
                 SetupPinEvent.NavigateToCreateWallet -> {
-                    // PIN set, session open — no wallet exists yet, go create one.
                     navController.navigate(Screen.CreateWallet) {
                         popUpTo(0) { inclusive = true }
                     }
                 }
+                SetupPinEvent.RecoveryConfirmationRequired -> {
+                    showRecoveryDialog = true
+                }
             }
         }
+    }
+
+    if (showRecoveryDialog) {
+        AlertDialog(
+            onDismissRequest = { showRecoveryDialog = false },
+            title = { Text("Recovery required") },
+            text = {
+                Text(
+                    "Existing wallet key material was found, but its unlock state is missing. " +
+                        "Setting up a new PIN will permanently erase the existing wallet. " +
+                        "You can restore it only from your recovery phrase."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRecoveryDialog = false
+                        viewModel.enterRecoveryMode()
+                    }
+                ) { Text("Recover") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRecoveryDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 
     Scaffold(
@@ -76,7 +104,7 @@ fun PinScreenSetup(
                 .padding(paddingValues)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = if (state.isChoosingLength) Arrangement.Center else Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -108,7 +136,9 @@ fun PinScreenSetup(
                     }
                 } else {
                     Text(
-                        if (state.isConfirming) "Confirm your PIN" else "Create a PIN",
+                        if (state.isConfirming) "Confirm your PIN"
+                        else if (state.recoveryMode) "Create a PIN (recovery)"
+                        else "Create a PIN",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Medium
                     )
@@ -142,12 +172,17 @@ fun PinScreenSetup(
                 }
             }
 
-            if (!state.isChoosingLength) {
-                Numpad(
-                    onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
-                    onDeleteClick = { viewModel.removeDigit() },
-                    isLocked = state.isLocked || state.isProcessing
-                )
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (!state.isChoosingLength) {
+                    NumericNumpadLayout(
+                        onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
+                        onDeleteClick = { viewModel.removeDigit() },
+                        isLocked = state.isLocked || state.isProcessing
+                    )
+                }
             }
         }
     }
@@ -195,12 +230,34 @@ fun PinScreenEnter(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val passwordField = remember { SecureTextFieldState() }
-    val focusRequester = remember { FocusRequester() }
+    var hasPassword by remember { mutableStateOf(false) }
+    val passwordTarget = remember {
+        SecureTargetAdapter(
+            state = passwordField,
+            maxLength = 128,
+            onValueChanged = {
+                hasPassword = it.isNotEmpty()
+                viewModel.onPasswordInput(it)
+            }
+        )
+    }
+    val submit: () -> Unit = { viewModel.submitPassword() }
+    val controller = rememberKeyboardController(onAction = submit)
+
+    val isPassword = state.securityMethod == SecurityMethod.PASSWORD
 
     LaunchedEffect(state.securityMethod) {
-        if (state.securityMethod == SecurityMethod.PASSWORD) {
-            focusRequester.requestFocus()
+        // Password mode drives the on-screen QWERTY keyboard; PIN mode uses the
+        // dedicated NumericNumpadLayout (wired to the ViewModel) instead.
+        if (isPassword) {
+            controller.show(passwordTarget)
         }
+    }
+
+    // Keep the keyboard inert while locked or in flight so a locked screen can't
+    // still accumulate input.
+    LaunchedEffect(state.isLocked, state.isProcessing) {
+        controller.setInputEnabled(!state.isLocked && !state.isProcessing)
     }
 
     LaunchedEffect(state.errorMessage, state.isProcessing) {
@@ -222,14 +279,11 @@ fun PinScreenEnter(
                     }
                 }
                 EnterPinEvent.NavigateToCreateWallet -> {
-                    // Session unlocked but no wallet exists yet (credential was set before
-                    // wallet creation and the app was restarted) — go create one.
                     navController.navigate(Screen.CreateWallet) {
                         popUpTo(0) { inclusive = true }
                     }
                 }
                 is EnterPinEvent.NavigateToRecovery -> {
-                    // Key material corrupted — re-setup the PIN (fresh DEK, new DB).
                     navController.navigate(Screen.SetupPin) {
                         popUpTo(0) { inclusive = true }
                     }
@@ -238,7 +292,6 @@ fun PinScreenEnter(
         }
     }
 
-    // Shake animation — triggers on each new shakeTriggerId
     val shakeAnimatable = remember { Animatable(0f) }
     LaunchedEffect(state.shakeTriggerId) {
         shakeAnimatable.animateTo(
@@ -256,117 +309,119 @@ fun PinScreenEnter(
     }
     val shakeOffset = shakeAnimatable.value
 
-    val isPassword = state.securityMethod == SecurityMethod.PASSWORD
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Unlock") }
-            )
-        }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = if (isPassword) Arrangement.Center else Arrangement.SpaceBetween
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    if (isPassword) "Enter your password" else "Enter your PIN",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Medium
+    CompositionLocalProvider(LocalKeyboardController provides controller) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Unlock") }
                 )
-                Text(
-                    "Unlock to access your wallet",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(32.dp))
-
-                if (isPassword) {
-                    OutlinedTextField(
-                        value = passwordField.text,
-                        onValueChange = {
-                            passwordField.update(it)
-                            viewModel.onPasswordInput(it)
-                        },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(focusRequester)
-                            .offset { IntOffset(shakeOffset.toInt(), 0) },
-                        isError = state.errorMessage != null,
-                        enabled = !state.isLocked && !state.isProcessing
-                    )
-                } else {
-                    PinDotsInline(
-                        enteredLength = state.enteredPinLength,
-                        pinLength = state.pinLength,
-                        modifier = Modifier.offset { IntOffset(shakeOffset.toInt(), 0) }
-                    )
-                }
-
-                if (state.isProcessing) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp
-                    )
-                } else if (state.isLocked) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        "Too many attempts. Try again in ${state.lockSecondsRemaining}s",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                } else if (state.errorMessage != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        state.errorMessage!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
             }
+        ) { paddingValues ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        if (isPassword) "Enter your password" else "Enter your PIN",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        "Unlock to access your wallet",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-            if (isPassword) {
-                Spacer(modifier = Modifier.height(24.dp))
-                if (state.isProcessing) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                } else {
-                    Button(
-                        onClick = {
-                            viewModel.submitPassword()
-                        },
-                        enabled = !state.isLocked && passwordField.text.isNotBlank(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                    ) {
-                        Text("Unlock", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(32.dp))
+
+                    if (state.securityMethod == null) {
+                        // Method not loaded yet — avoid flashing the PIN dots for a
+                        // password-method user before it switches (M13).
+                        Spacer(modifier = Modifier.height(32.dp))
+                    } else if (isPassword) {
+                        SecureOutlinedTextField(
+                            target = passwordTarget,
+                            label = { Text("Password") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .offset { IntOffset(shakeOffset.toInt(), 0) },
+                            isError = state.errorMessage != null,
+                            enabled = !state.isLocked && !state.isProcessing
+                        )
+                    } else {
+                        PinDotsInline(
+                            enteredLength = state.enteredPinLength,
+                            pinLength = state.pinLength,
+                            modifier = Modifier.offset { IntOffset(shakeOffset.toInt(), 0) }
+                        )
+                    }
+
+                    if (state.isProcessing) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else if (state.isLocked) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Too many attempts. Try again in ${state.lockSecondsRemaining}s",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    } else if (state.errorMessage != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            state.errorMessage!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
-            } else {
-                Numpad(
-                    onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
-                    onDeleteClick = { viewModel.removeDigit() },
-                    isLocked = state.isLocked || state.isProcessing
-                )
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (isPassword) {
+                        Spacer(modifier = Modifier.height(24.dp))
+                        if (state.isProcessing) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                        } else {
+                            Button(
+                                onClick = submit,
+                                enabled = !state.isLocked && hasPassword,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(52.dp)
+                            ) {
+                                Text("Unlock", style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        AppKeyboard()
+                    } else {
+                        NumericNumpadLayout(
+                            onDigitClick = { viewModel.addDigit(('0'.code + it).toChar()) },
+                            onDeleteClick = { viewModel.removeDigit() },
+                            isLocked = state.isLocked || state.isProcessing
+                        )
+                    }
+                }
             }
         }
     }
 }
 
-/** Inline row of filled/empty dots using Box + CircleShape. */
 @Composable
 internal fun PinDotsInline(
     enteredLength: Int,
@@ -391,3 +446,4 @@ internal fun PinDotsInline(
         }
     }
 }
+

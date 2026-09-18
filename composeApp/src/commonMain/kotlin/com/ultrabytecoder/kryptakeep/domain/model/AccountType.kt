@@ -11,7 +11,7 @@ sealed class AccountType(val type: String) {
     data object Btc : AccountType("BTC")
     data object Eth : AccountType("ETH")
     data object Trx : AccountType("TRX")
-    data class Ton(val walletVersion: String = "V3R2") : AccountType("TON")
+    data class Ton(val walletVersion: String = "V3R2") : AccountType("GRAM")
     data class Erc20(val tokenAddress: String) : AccountType("ERC20")
     data class Trc20(val tokenAddress: String) : AccountType("TRC20")
     data class TonToken(val jettonMasterAddress: String) : AccountType("TON_TOKEN")
@@ -24,7 +24,7 @@ sealed class AccountType(val type: String) {
         get() = when (this) {
             is Erc20 -> "ERC20"
             is Trc20 -> "TRC20"
-            is TonToken -> "TON"
+            is TonToken -> "GRAM"
             else -> type
         }
 
@@ -62,7 +62,7 @@ sealed class AccountType(val type: String) {
             "BTC" -> Btc
             "ETH" -> Eth
             "TRX" -> Trx
-            "TON" -> {
+            "GRAM", "TON" -> {
                 val version = parseWalletVersion(params)
                 Ton(version)
             }
@@ -101,6 +101,19 @@ sealed class AccountType(val type: String) {
 }
 
 /**
+ * Ticker of the currency in which the network fee for a transfer from an
+ * account of this type is denominated. For token types the fee is paid in the
+ * parent chain's native coin, never in the token itself.
+ */
+val AccountType.feeSymbol: String
+    get() = when (this) {
+        is AccountType.Btc -> "BTC"
+        is AccountType.Eth, is AccountType.Erc20 -> "ETH"
+        is AccountType.Trx, is AccountType.Trc20 -> "TRX"
+        is AccountType.Ton, is AccountType.TonToken -> "GRAM"
+    }
+
+/**
  * Native blockchains for which the user may configure a custom RPC/API node.
  * Token types (ERC20/TRC20) inherit the parent chain's node, so they are not
  * listed separately.
@@ -112,7 +125,7 @@ enum class ChainType(
     BTC("Bitcoin",  CustomNodeKeys.BTC),
     ETH("Ethereum", CustomNodeKeys.ETH),
     TRX("Tron",     CustomNodeKeys.TRX),
-    TON("TON",      CustomNodeKeys.TON);
+    TON("GRAM",     CustomNodeKeys.TON);
 
     /** Default URL for this chain in the supplied [config]. */
     fun defaultUrl(config: NetworkConfig): String = when (this) {

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
+import com.ultrabytecoder.kryptakeep.data.SettingsKeys
 import com.ultrabytecoder.kryptakeep.data.SettingsStorage
 import com.ultrabytecoder.kryptakeep.domain.model.AccountInfo
 import com.ultrabytecoder.kryptakeep.domain.model.AccountType
@@ -11,6 +12,9 @@ import com.ultrabytecoder.kryptakeep.domain.model.CustomFeeParams
 import com.ultrabytecoder.kryptakeep.domain.model.FeeEstimation
 import com.ultrabytecoder.kryptakeep.domain.model.FeePresets
 import com.ultrabytecoder.kryptakeep.domain.model.FeeValidator
+import com.ultrabytecoder.kryptakeep.domain.model.FiatCurrency
+import com.ultrabytecoder.kryptakeep.domain.model.feeSymbol
+import com.ultrabytecoder.kryptakeep.domain.provider.FiatQuoteProvider
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.UtxoRepository
@@ -74,7 +78,8 @@ class SendViewModel(
     private val transactionRepository: TransactionRepository,
     private val keyProvider: KeyProvider,
     private val networkConfig: NetworkConfig,
-    private val settingsStorage: SettingsStorage
+    private val settingsStorage: SettingsStorage,
+    private val quoteProvider: FiatQuoteProvider
 ) : ViewModel() {
     private val _account = MutableStateFlow<AccountInfo?>(null)
     val account: StateFlow<AccountInfo?> = _account.asStateFlow()
@@ -106,6 +111,25 @@ class SendViewModel(
 
     private val _validationError = MutableStateFlow<String?>(null)
     val validationError: StateFlow<String?> = _validationError.asStateFlow()
+
+    // Fiat currency conversion of the fee / total shown in the fee card.
+    private val _fiatCurrency = MutableStateFlow(
+        FiatCurrency.fromStored(settingsStorage.getString(SettingsKeys.FIAT_CURRENCY))
+    )
+    val fiatCurrency: StateFlow<FiatCurrency> = _fiatCurrency.asStateFlow()
+
+    private val _feeFiat = MutableStateFlow<Double?>(null)
+    val feeFiat: StateFlow<Double?> = _feeFiat.asStateFlow()
+
+    private val _totalFiat = MutableStateFlow<Double?>(null)
+    val totalFiat: StateFlow<Double?> = _totalFiat.asStateFlow()
+
+    private var lastAmount: BigDecimal? = null
+
+    // Monotonic id for estimation requests (Main-dispatcher confined). Results from
+    // superseded requests — e.g. when the user edits the amount while an RPC is still
+    // in flight, or clears it mid-flight — must never be applied to the UI state.
+    private var estimationSeq: Long = 0
 
     init {
         // Load saved fee preferences
@@ -279,26 +303,98 @@ class SendViewModel(
     }
 
     fun estimateFee(amount: BigDecimal, recipientAddress: String? = null) {
+        val seq = ++estimationSeq
         viewModelScope.launch {
             try {
                 _feeError.value = null
-                _fee.value = estimateFeeUseCase(accountId, amount, recipientAddress, buildFeeParams())
+                val estimation = estimateFeeUseCase(accountId, amount, recipientAddress, buildFeeParams())
+                if (seq != estimationSeq) return@launch
+                // The crypto fee and its fiat conversion must update together: drop the
+                // old fiat now so the card never pairs a new fee with stale prices while
+                // the fresh quotes are being fetched.
+                clearFiatValues()
+                _fee.value = estimation
+                lastAmount = amount
+                updateFiat(amount, estimation, seq)
             } catch (e: IllegalArgumentException) {
+                if (seq != estimationSeq) return@launch
                 _fee.value = null
                 _feeError.value = "Fee estimation failed: ${e.message ?: "invalid parameter"}"
+                clearFiatValues()
             } catch (e: IllegalStateException) {
+                if (seq != estimationSeq) return@launch
                 _fee.value = null
                 _feeError.value = e.message ?: "Fee estimation failed"
+                clearFiatValues()
             } catch (e: Exception) {
+                if (seq != estimationSeq) return@launch
                 _fee.value = null
                 _feeError.value = "Fee estimation failed: ${e.message ?: "network error"}"
+                clearFiatValues()
             }
         }
     }
 
     fun clearFee() {
+        // Supersede any in-flight estimation so it can't refill the card after clearing.
+        estimationSeq++
         _fee.value = null
         _feeError.value = null
+        lastAmount = null
+        clearFiatValues()
+    }
+
+    /** Re-read the user's fiat currency selection and re-price the current fee/amount. */
+    fun refreshFiatCurrency() {
+        _fiatCurrency.value = FiatCurrency.fromStored(settingsStorage.getString(SettingsKeys.FIAT_CURRENCY))
+        val fee = _fee.value
+        val amount = lastAmount
+        if (fee != null && amount != null) updateFiat(amount, fee, estimationSeq) else clearFiatValues()
+    }
+
+    private fun clearFiatValues() {
+        _feeFiat.value = null
+        _totalFiat.value = null
+    }
+
+    /**
+     * Converts the fee (always denominated in the chain's native coin) and the
+     * amount (denominated in the account's own asset) to the selected fiat
+     * currency. For token accounts these use two different prices.
+     *
+     * [seq] is the estimation sequence this pricing belongs to; results are only
+     * applied while it is still the latest request, so a slow stale quote can
+     * never overwrite fresher values. The identity check on [fee] additionally
+     * guards against two callers sharing the same sequence number (e.g. a
+     * currency refresh racing an in-flight estimation).
+     */
+    private fun updateFiat(amount: BigDecimal, fee: FeeEstimation, seq: Long) {
+        val account = _account.value ?: return
+        val currency = _fiatCurrency.value
+        viewModelScope.launch {
+            try {
+                val feeSymbol = account.type.feeSymbol
+                val feePrice = quoteProvider.getPrice(feeSymbol, currency)
+                val amountPrice = if (account.symbol.equals(feeSymbol, ignoreCase = true)) {
+                    feePrice
+                } else {
+                    quoteProvider.getPrice(account.symbol, currency)
+                }
+                if (seq != estimationSeq || _fee.value != fee) return@launch
+                // A zero rate means the quote is unusable — show "—" rather than
+                // implying a free transaction or a worthless asset. (A zero *fee* is
+                // legitimate and unaffected: totalCost, not the price, is zero there.)
+                if (feePrice <= 0.0 || amountPrice <= 0.0) {
+                    clearFiatValues()
+                    return@launch
+                }
+                val feeFiatValue = fee.totalCost.doubleValue(exactRequired = false) * feePrice
+                _feeFiat.value = feeFiatValue
+                _totalFiat.value = amount.doubleValue(exactRequired = false) * amountPrice + feeFiatValue
+            } catch (e: Exception) {
+                if (seq == estimationSeq) clearFiatValues()
+            }
+        }
     }
 
     suspend fun sendTransaction(address: String, amount: BigDecimal): String {

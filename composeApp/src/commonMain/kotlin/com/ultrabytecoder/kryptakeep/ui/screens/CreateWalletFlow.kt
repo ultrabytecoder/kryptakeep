@@ -5,6 +5,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.navigation.NavHostController
+import kotlinx.coroutines.flow.first
 import com.ultrabytecoder.kryptakeep.ui.viewmodel.CreateWalletViewModel
 
 /**
@@ -27,11 +28,12 @@ fun CreateWalletFlow(
 ) {
     val step by viewModel.step.collectAsState()
 
-    // Event-driven navigation: the ViewModel sends the wallet id to a
-    // conflated channel exactly once per successful creation; this collector
-    // receives it instantly (no polling) and navigates exactly once.
+    // Event-driven navigation: the ViewModel emits the wallet id to a
+    // replay-1 SharedFlow exactly once per successful creation; this
+    // collector receives it instantly (no polling) and navigates exactly
+    // once (the flow exits after the first event).
     LaunchedEffect(Unit) {
-        viewModel.createdWalletEvents.receiveCatching().getOrNull()?.let { onWalletCreated(it) }
+        viewModel.walletCreated.first().let { onWalletCreated(it) }
     }
 
     when (step) {

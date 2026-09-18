@@ -8,7 +8,7 @@ class MockFiatQuoteProvider : FiatQuoteProvider {
         "BTC" to 100_000.0,
         "ETH" to 4_000.0,
         "TRX" to 0.20,
-        "TON" to 8.0,
+        "GRAM" to 8.0,
         "USDT" to 1.0,
         "USDC" to 1.0,
         "DAI" to 1.0,

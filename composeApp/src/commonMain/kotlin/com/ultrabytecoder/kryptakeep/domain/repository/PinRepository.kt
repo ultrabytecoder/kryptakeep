@@ -28,7 +28,14 @@ sealed class ChangePinResult {
 interface PinRepository {
     val pinStateFlow: StateFlow<PinState>
     val securityMethodFlow: StateFlow<SecurityMethod?>
-    suspend fun setupPin(pin: CharArray, method: SecurityMethod)
+
+    /**
+     * Sets up a fresh credential. [recoveryAcknowledged] must be true when the user
+     * arrived through the corrupted-state recovery flow (existing key material will
+     * be destroyed); with false and existing key material present, setup is refused
+     * so a fresh PIN can never silently destroy a wallet.
+     */
+    suspend fun setupPin(pin: CharArray, method: SecurityMethod, recoveryAcknowledged: Boolean = false)
     suspend fun verifyPin(pin: CharArray): VerifyResult
 
     /**

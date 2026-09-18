@@ -14,7 +14,12 @@ enum class FiatCurrency(
     UAH("UAH", "Ukrainian Hryvnia", 39.5);
 
     companion object {
+        val SUPPORTED: List<FiatCurrency> = listOf(USD, EUR)
+
         fun fromCode(code: String?): FiatCurrency =
             entries.firstOrNull { it.code == code } ?: USD
+
+        fun fromStored(code: String?): FiatCurrency =
+            fromCode(code).let { if (it in SUPPORTED) it else USD }
     }
 }

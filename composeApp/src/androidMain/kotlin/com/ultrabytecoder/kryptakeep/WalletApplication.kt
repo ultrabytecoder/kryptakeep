@@ -26,9 +26,11 @@ class MyApplication : Application(), KoinComponent {
     // is STILL the top one, no other activity took over — the app is backgrounding.
     // (Clearing it in onActivityPaused broke the lock: MainActivity.onStop then saw
     // topActivity == null and never locked — NEW-1.)
-    @Volatile
-    var topActivity: Activity? = null
-        private set
+    @Volatile private var topActivityRef: java.lang.ref.WeakReference<Activity>? = null
+
+    var topActivity: Activity?
+        get() = topActivityRef?.get()
+        private set(value) { topActivityRef = if (value == null) null else java.lang.ref.WeakReference(value) }
 
     private val sessionManager: SessionManager by inject()
 

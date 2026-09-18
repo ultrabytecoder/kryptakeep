@@ -83,7 +83,7 @@ class CreateTokenUseCase(
     private fun parentDisplayInfo(parent: AccountType): Pair<String, String> = when (parent) {
         is AccountType.Eth -> "Ethereum (ETH)" to "ETH"
         is AccountType.Trx -> "TRON (TRX)" to "TRX"
-        is AccountType.Ton -> "TON" to "TON"
+        is AccountType.Ton -> "GRAM" to "GRAM"
         else -> error("Unsupported parent chain: $parent")
     }
 }

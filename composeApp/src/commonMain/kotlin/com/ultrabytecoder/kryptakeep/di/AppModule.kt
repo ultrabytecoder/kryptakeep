@@ -1,13 +1,14 @@
 package com.ultrabytecoder.kryptakeep.di
 
-import com.ultrabytecoder.kryptakeep.data.DatabaseDriverFactory
+import com.ultrabytecoder.kryptakeep.security.DbSessionFactory
 import com.ultrabytecoder.kryptakeep.data.DatabaseProvider
 import com.ultrabytecoder.kryptakeep.data.NetworkConfig
 import com.ultrabytecoder.kryptakeep.data.PinRepositoryImpl
+import com.ultrabytecoder.kryptakeep.data.RemoteFiatQuoteProvider
 import com.ultrabytecoder.kryptakeep.data.SettingsStorage
+import com.ultrabytecoder.kryptakeep.data.SessionUnlocker
 import com.ultrabytecoder.kryptakeep.data.applyCustomNodes
 import com.ultrabytecoder.kryptakeep.domain.provider.FiatQuoteProvider
-import com.ultrabytecoder.kryptakeep.domain.provider.MockFiatQuoteProvider
 import com.ultrabytecoder.kryptakeep.domain.repository.AccountRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.PinRepository
 import com.ultrabytecoder.kryptakeep.domain.repository.TransactionRepository
@@ -50,8 +51,9 @@ fun appModule(networkConfig: NetworkConfig) = module {
     // Security: envelope key management + lazy session (DB opens only after unlock)
     single { KeyManager(get()) }
     single { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
-    single { SessionManager(get(), get()) }
+    single { SessionManager(platformDriverFactory(), get()) }
     single<DatabaseProvider> { get<SessionManager>() }
+    single<SessionUnlocker> { get<SessionManager>() }
 
     single<AccountRepository> { com.ultrabytecoder.kryptakeep.data.AccountRepository(get()) }
     single<UtxoRepository> { com.ultrabytecoder.kryptakeep.data.UtxoRepository(get()) }
@@ -83,5 +85,5 @@ fun appModule(networkConfig: NetworkConfig) = module {
     factory { VerifyPinUseCase(get()) }
     factory { ChangePinUseCase(get()) }
 
-    single<FiatQuoteProvider> { MockFiatQuoteProvider() }
+    single<FiatQuoteProvider> { RemoteFiatQuoteProvider(get()) }
 }
