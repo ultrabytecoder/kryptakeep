@@ -4,9 +4,9 @@
 #
 # Builds:
 #   - Android release APKs (mainnet + testnet), keystore-signed via signing/sign.sh
-#   - Desktop portable uber .jar
-#   - Desktop .deb   (needs dpkg-deb; present on most Debian/Ubuntu)
-#   - Desktop .rpm   (needs rpmbuild; run `sudo apt-get install -y rpm` to enable)
+#   - Desktop portable uber .jar  (testnet + mainnet — network baked at build time)
+#   - Desktop .deb   (testnet + mainnet; needs dpkg-deb; present on most Debian/Ubuntu)
+#   - Desktop .rpm   (testnet + mainnet; needs rpmbuild; run `sudo apt-get install -y rpm`)
 #
 # NOT built here (require other host OSes) -- build in CI instead:
 #   - Windows .msi   (windows-latest)
@@ -43,6 +43,34 @@ log(){ printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 warn(){ printf '\033[1;33mWARN: %s\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
+# Stash one network's desktop artifacts into $DIST_DIR. Call this RIGHT AFTER
+# building that network: the compose native-packaging tasks (packageDeb/packageRpm)
+# wipe their output dir on the next build, so installers do not coexist. The uber
+# jar does coexist (unique name) but is stashed here too for symmetry.
+collect_desktop_artifacts(){
+  local NET="$1" JAR DEB RPM
+  JAR="$(find "$JAR_SUBDIR" -maxdepth 1 -iname "kryptakeep-${NET}-*.jar" 2>/dev/null | head -n1)"
+  [[ -n "$JAR" ]] || die "desktop $NET jar not found under $JAR_SUBDIR"
+  cp -f "$JAR" "$DIST_DIR/kryptakeep-linux-x86_64-${NET}.jar"
+  echo "  + kryptakeep-linux-x86_64-${NET}.jar (from $(basename "$JAR"))"
+
+  DEB="$(find "$BIN_SUBDIR" -iname "kryptakeep-${NET}_*.deb" 2>/dev/null | head -n1)"
+  if [[ -n "$DEB" ]]; then
+    cp -f "$DEB" "$DIST_DIR/kryptakeep-linux-x86_64-${NET}.deb"
+    echo "  + kryptakeep-linux-x86_64-${NET}.deb (from $(basename "$DEB"))"
+  else
+    (( BUILD_DEB )) && warn ".deb ($NET) not produced (expected under $BIN_SUBDIR/deb)"
+  fi
+
+  RPM="$(find "$BIN_SUBDIR" -iname "kryptakeep-${NET}*.rpm" 2>/dev/null | head -n1)"
+  if [[ -n "$RPM" ]]; then
+    cp -f "$RPM" "$DIST_DIR/kryptakeep-linux-x86_64-${NET}.rpm"
+    echo "  + kryptakeep-linux-x86_64-${NET}.rpm (from $(basename "$RPM"))"
+  else
+    (( BUILD_RPM )) && warn ".rpm ($NET) not produced (expected under $BIN_SUBDIR/rpm)"
+  fi
+}
+
 # ---------------- Preflight ----------------
 log "Preflight checks"
 command -v java   >/dev/null 2>&1 || die "java not found on PATH"
@@ -66,11 +94,22 @@ BUILD_RPM=0; command -v rpmbuild >/dev/null 2>&1 && BUILD_RPM=1
 if (( NO_BUILD )); then
   log "Skipping Gradle build (--no-build)"
 else
-  GRADLE_TASKS=( :composeApp:assembleRelease :composeApp:packageUberJarForCurrentOS )
-  (( BUILD_DEB )) && GRADLE_TASKS+=( :composeApp:packageDeb )
-  (( BUILD_RPM )) && GRADLE_TASKS+=( :composeApp:packageRpm )
-  log "Gradle build: ${GRADLE_TASKS[*]}"
-  ./gradlew "${GRADLE_TASKS[@]}"
+  # Android: both flavors at once (independent of the desktop kkNetwork property).
+  log "Gradle build (Android): :composeApp:assembleRelease"
+  ./gradlew :composeApp:assembleRelease
+
+  # Desktop: build each network separately so the jar/installer bakes the correct
+  # network (testnet + mainnet), stashing artifacts right after each build because
+  # the next build wipes the previous network's installer output dir.
+  mkdir -p "$DIST_DIR"
+  for NET in testnet mainnet; do
+    DESKTOP_TASKS=( :composeApp:packageUberJarForCurrentOS )
+    (( BUILD_DEB )) && DESKTOP_TASKS+=( :composeApp:packageDeb )
+    (( BUILD_RPM )) && DESKTOP_TASKS+=( :composeApp:packageRpm )
+    log "Gradle build (desktop $NET): ${DESKTOP_TASKS[*]}"
+    ./gradlew -PkkNetwork="$NET" "${DESKTOP_TASKS[@]}"
+    collect_desktop_artifacts "$NET"
+  done
 fi
 
 # ---------------- Sign Android APKs ----------------
@@ -95,33 +134,22 @@ cp -f signing/output/kryptakeep.apk         "$DIST_DIR/kryptakeep.apk"
 cp -f signing/output/kryptakeep-testnet.apk "$DIST_DIR/kryptakeep-testnet.apk"
 echo "  + kryptakeep.apk, kryptakeep-testnet.apk"
 
-JAR="$(find "$JAR_SUBDIR" -maxdepth 1 -name 'KryptaKeep-*.jar' 2>/dev/null | head -n1)"
-[[ -n "$JAR" ]] || die "desktop jar not found under $JAR_SUBDIR"
-cp -f "$JAR" "$DIST_DIR/kryptakeep-linux-x64.jar"
-echo "  + kryptakeep-linux-x64.jar (from $(basename "$JAR"))"
-
-DEB="$(find "$BIN_SUBDIR" -name 'KryptaKeep-*.deb' 2>/dev/null | head -n1)"
-if [[ -n "$DEB" ]]; then
-  cp -f "$DEB" "$DIST_DIR/kryptakeep-x86_64.deb"
-  echo "  + kryptakeep-x86_64.deb (from $(basename "$DEB"))"
-else
-  (( BUILD_DEB )) && warn ".deb not produced (expected under $BIN_SUBDIR/deb)"
-fi
-
-RPM="$(find "$BIN_SUBDIR" -name 'KryptaKeep-*.rpm' 2>/dev/null | head -n1)"
-if [[ -n "$RPM" ]]; then
-  cp -f "$RPM" "$DIST_DIR/kryptakeep-x86_64.rpm"
-  echo "  + kryptakeep-x86_64.rpm (from $(basename "$RPM"))"
-else
-  (( BUILD_RPM )) && warn ".rpm not produced (expected under $BIN_SUBDIR/rpm)"
+# Desktop artifacts are already stashed per-network during the build above
+# (installers get wiped by the following network's build, so they can't be
+# collected here). In --no-build mode there was no build, so best-effort collect
+# whatever is still present (jars coexist; installers may be partial).
+if (( NO_BUILD )); then
+  for NET in testnet mainnet; do
+    collect_desktop_artifacts "$NET"
+  done
 fi
 
 # One-time Windows .msi: if a CI-downloaded copy was staged next to the project, include it.
-if [[ -f "$PROJECT_DIR/dist-staging/kryptakeep-x86_64.msi" ]]; then
-  cp -f "$PROJECT_DIR/dist-staging/kryptakeep-x86_64.msi" "$DIST_DIR/kryptakeep-x86_64.msi"
-  echo "  + kryptakeep-x86_64.msi (staged from CI)"
+if [[ -f "$PROJECT_DIR/dist-staging/kryptakeep-win-x86_64.msi" ]]; then
+  cp -f "$PROJECT_DIR/dist-staging/kryptakeep-win-x86_64.msi" "$DIST_DIR/kryptakeep-win-x86_64.msi"
+  echo "  + kryptakeep-win-x86_64.msi (staged from CI)"
 else
-  warn "no staged kryptakeep-x86_64.msi (Windows build runs in CI; drop it in dist-staging/ to include)"
+  warn "no staged kryptakeep-win-x86_64.msi (Windows build runs in CI; drop it in dist-staging/ to include)"
 fi
 
 log "Staged artifacts in $DIST_DIR:"

@@ -16,6 +16,34 @@ val localProperties = Properties().apply {
     if (file.exists()) load(file.inputStream())
 }
 
+// Desktop network "flavor": baked into the jar at build time so a single build
+// yields an unambiguous testnet OR mainnet artifact (mirrors the Android
+// productionTestnet/productionMainnet product flavors). Override with
+// ./gradlew -PkkNetwork=mainnet (default: testnet).
+val kkNetwork = (findProperty("kkNetwork") as? String ?: "testnet").lowercase()
+require(kkNetwork in listOf("testnet", "mainnet")) {
+    "kkNetwork must be 'testnet' or 'mainnet' (got '$kkNetwork')"
+}
+val kkIsTestnet = kkNetwork == "testnet"
+val kkEtherscanKey = localProperties.getProperty(
+    if (kkIsTestnet) "etherscan.testnet.api.key" else "etherscan.mainnet.api.key", ""
+)
+// Write the generated constant eagerly at configuration time so the srcDir below
+// is always valid before compilation. Content is deterministic per (network, key),
+// so Gradle's input-aware up-to-date check still skips recompiles when unchanged.
+val kkGenDir = layout.buildDirectory.dir("generated/kknetwork/$kkNetwork").get().asFile
+kkGenDir.mkdirs()
+File(kkGenDir, "DesktopBuildConfig.kt").writeText(
+    """
+    package com.ultrabytecoder.kryptakeep
+
+    object DesktopBuildConfig {
+        const val IS_TESTNET = ${kkIsTestnet}
+        const val ETHERSCAN_API_KEY = "${kkEtherscanKey.replace("\\", "\\\\").replace("\"", "\\\"")}"
+    }
+    """.trimIndent()
+)
+
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidApplication)
@@ -165,6 +193,9 @@ kotlin {
         }
         val desktopMain by getting {
             dependsOn(jvmMain)
+            // Baked network constant (DesktopBuildConfig) is desktop-only; the
+            // Android target resolves its network via BuildConfig.IS_TESTNET instead.
+            kotlin.srcDir(kkGenDir)
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation(libs.jna)
@@ -342,14 +373,23 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Msi, TargetFormat.Dmg)
-            packageName = "KryptaKeep"
+            // Suffix per network so testnet and mainnet installers coexist.
+            packageName = "KryptaKeep-$kkNetwork"
             packageVersion = "1.0.0"
             windows {
                 menuGroup = "KryptaKeep"
                 shortcut = true
                 dirChooser = true
                 perUserInstall = true
-                upgradeUuid = "7a5d1f8e-3b2c-4d6a-9e1f-0a2b3c4d5e6f"
+                // Distinct per network so the testnet + mainnet installers can coexist
+                // on the same machine (the MSI ProductCode/upgrade code). Mirrors the
+                // .testnet/.mainnet applicationIdSuffix on Android and the
+                // network-suffixed bundle identifiers on iOS.
+                upgradeUuid = if (kkIsTestnet) {
+                    "7a5d1f8e-3b2c-4d6a-9e1f-0a2b3c4d5e6f"
+                } else {
+                    "7a5d1f8e-3b2c-4d6b-9e1f-0a2b3c4d5e6f"
+                }
             }
         }
     }

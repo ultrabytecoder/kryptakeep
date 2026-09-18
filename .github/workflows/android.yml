@@ -52,11 +52,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Each OS builds BOTH networks (testnet + mainnet); -PkkNetwork bakes the
+        # network into the jar/installer and its filename, so both variants ship.
+        kkNetwork: [testnet, mainnet]
         include:
           - os: ubuntu-latest
             target: linux
             task: :composeApp:packageDeb :composeApp:packageRpm :composeApp:packageUberJarForCurrentOS
-            artifact-path: composeApp/build/compose/binaries/main/
+            # Installers live under binaries/main/; the (network-named) jar under jars/.
+            artifact-path: |
+              composeApp/build/compose/binaries/main/
+              composeApp/build/compose/jars/
             install-deps: |
               sudo apt-get update
               sudo apt-get install -y fakeroot dpkg-dev rpm
@@ -84,17 +90,22 @@ jobs:
       if: runner.os != 'Windows'
       run: chmod +x gradlew
 
+    - name: Create local.properties (Etherscan keys baked into the jar/installer)
+      run: |
+        echo "etherscan.testnet.api.key=${{ secrets.ETHERSCAN_TESTNET_API_KEY }}" >> local.properties
+        echo "etherscan.mainnet.api.key=${{ secrets.ETHERSCAN_MAINNET_API_KEY }}" >> local.properties
+
     - name: Install packaging dependencies
       if: matrix.install-deps != ''
       run: ${{ matrix.install-deps }}
 
-    - name: Build desktop packages
-      run: ./gradlew ${{ matrix.task }}
+    - name: Build desktop packages (${{ matrix.kkNetwork }})
+      run: ./gradlew -PkkNetwork=${{ matrix.kkNetwork }} ${{ matrix.task }}
 
     - name: Upload installers
       uses: actions/upload-artifact@v4
       with:
-        name: KryptaKeep-${{ matrix.target }}
+        name: KryptaKeep-${{ matrix.target }}-${{ matrix.kkNetwork }}
         path: ${{ matrix.artifact-path }}
         if-no-files-found: error
 

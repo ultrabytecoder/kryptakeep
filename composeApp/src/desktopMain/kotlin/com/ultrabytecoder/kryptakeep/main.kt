@@ -13,11 +13,18 @@ import org.koin.core.context.stopKoin
 import org.koin.core.logger.Level
 
 fun main() = application {
-    val useMainnet = System.getProperty("kryptakeep.network") == "mainnet"
+    // Network is baked in at build time (DesktopBuildConfig, via -PkkNetwork).
+    // A -Dkryptakeep.network=mainnet|testnet JVM property still overrides for dev.
+    val useMainnet = when (System.getProperty("kryptakeep.network")) {
+        "mainnet" -> true
+        "testnet" -> false
+        else -> !DesktopBuildConfig.IS_TESTNET
+    }
+    val etherscanKey = System.getProperty("kryptakeep.etherscan.key", DesktopBuildConfig.ETHERSCAN_API_KEY)
     val networkConfig = if (useMainnet) {
-        NetworkConfig.mainnet(etherscanApiKey = System.getProperty("kryptakeep.etherscan.key", ""))
+        NetworkConfig.mainnet(etherscanApiKey = etherscanKey)
     } else {
-        NetworkConfig.testnet(etherscanApiKey = System.getProperty("kryptakeep.etherscan.key", ""))
+        NetworkConfig.testnet(etherscanApiKey = etherscanKey)
     }
 
     startKoin {

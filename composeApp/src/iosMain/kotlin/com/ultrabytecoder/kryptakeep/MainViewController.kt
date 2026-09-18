@@ -20,7 +20,15 @@ fun MainViewController() = ComposeUIViewController {
     KoinApplication(
         application = {
             val apiKey = NSBundle.mainBundle.objectForInfoDictionaryKey("EtherscanApiKey") as? String ?: ""
-            modules(appModule(NetworkConfig.testnet(apiKey)), platformModule)
+            // Network + Etherscan key are injected by the host app's Info.plist
+            // (per Testnet/Mainnet Xcode build configuration). Defaults to testnet.
+            val network = NSBundle.mainBundle.objectForInfoDictionaryKey("Network") as? String ?: "testnet"
+            val networkConfig = if (network == "mainnet") {
+                NetworkConfig.mainnet(apiKey)
+            } else {
+                NetworkConfig.testnet(apiKey)
+            }
+            modules(appModule(networkConfig), platformModule)
         }
     ) {
         // The app is resigning active (app switcher, background): lock the session
