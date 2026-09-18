@@ -3,8 +3,10 @@ name: Android CI
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch: {}
 
 jobs:
   build:
@@ -93,3 +95,39 @@ jobs:
         name: KryptaKeep-${{ matrix.target }}
         path: ${{ matrix.artifact-path }}
         if-no-files-found: error
+
+  publish-release:
+    name: Publish Release
+    # Best-effort: run even if a matrix leg failed (always()), so a successful
+    # Windows .msi (or any other platform that built) still reaches the release.
+    needs: [desktop-build]
+    if: always() && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: release-assets
+        if-no-files-found: ignore
+
+    - name: List collected assets
+      run: |
+        echo "Artifacts collected for release:"
+        find release-assets -type f | sort || true
+
+    - name: Publish to GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ github.ref_name }}
+        fail_on_unmatched_files: false
+        draft: false
+        prerelease: false
+        files: |
+          release-assets/**/*.apk
+          release-assets/**/*.deb
+          release-assets/**/*.rpm
+          release-assets/**/*.msi
+          release-assets/**/*.dmg
+          release-assets/**/*.jar
